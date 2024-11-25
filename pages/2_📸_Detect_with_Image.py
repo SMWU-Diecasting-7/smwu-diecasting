@@ -37,37 +37,30 @@ def display_results(images, results):
     ng_No = []
     ok_No = []
 
-    # 5개씩 묶어서 처리
-    for i in range(0, len(results), 5):
-        batch_results = results[i:i+5]
-        batch_images = images[i:i+5]
+    # 이미지별 결과 처리
+    cols = st.columns(5)
+    for i, (image, status) in enumerate(zip(images, results)):
+        label = "OK" if status == 1 else "NG"
+        label_color = (0, 255, 0) if status == 1 else (0, 0, 255)
         
-        # 부품 상태 결정
-        batch_status = "NG" if 0 in batch_results else "OK"
-
-        if batch_status == "NG":
-            ng_No.append(i)
+        # 이미지 상태 기록
+        if status == 0:
+            ng_No.append(i + 1)
+            ng_images.append(image)
         else:
-            ok_No.append(i)
-
-        cols = st.columns(5)
-        for j, (image, status) in enumerate(zip(batch_images, batch_results)):
-            label = "OK" if status == 1 else "NG"
-            label_color = (0, 255, 0) if status == 1 else (0, 0, 255)
-
-            if status == 0:
-                ng_images.append(image)
-
-            bordered_image = add_border(image, label_color)
-            cols[j].image(bordered_image, channels="BGR", caption=f"No. {i + j + 1}: {label}")
+            ok_No.append(i + 1)
+        
+        #각 이미지별 결과 표시
+        bordered_image = add_border(image, label_color)
+        cols[i % 5].image(bordered_image, channels="BGR", caption=f"No. {i + 1}: {label}")
     
     # NG 이미지 추가 출력
     if ng_images:
         st.subheader("Final NG Images")
         cols = st.columns(5)
-        for idx, ng_image in enumerate(ng_images):
+        for idx, (ng_image, ng_no) in enumerate(zip(ng_images, ng_No)):
             bordered_ng_image = add_border(ng_image, (0, 0, 255))
-            cols[idx % 5].image(bordered_ng_image, channels="BGR", caption=f"No. {idx + 1}")
+            cols[idx % 5].image(bordered_ng_image, channels="BGR", caption=f"No. {ng_no}")
     
     # 최종 결과
     st.subheader("Final Result Summary")
