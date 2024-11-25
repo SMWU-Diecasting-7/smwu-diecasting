@@ -64,7 +64,7 @@ def display_results(images, results):
 
 
 def image_inference():
-    st.title("Real-time NG/OK Video Classification")
+    st.title("Real-time NG/OK Image Classification")
     
     # 이미지 파일 업로드
     uploaded_images = st.file_uploader("Choose an image files", type=["jpg", "jpeg", "png"], accept_multiple_files=True)
