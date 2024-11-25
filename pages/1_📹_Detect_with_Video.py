@@ -41,10 +41,11 @@ def process_video(video_path, tolerance=5):
             processed_img = resize_and_pad_image(
                 crop_image(apply_color_jitter(frame, brightness=1.3, contrast=1.5), 1.0)
             )
-            # 2. torch 이미지 전처리 (PIL 변환 -> 텐서 변환 -> 정규화)
-            processed_img_tensor = preprocess(processed_img)  # 텐서화 및 정규화
-            processed_img_numpy = (processed_img_tensor.permute(1, 2, 0).numpy() * 255).astype(np.uint8)  # HWC 변환
-            unique_images.append(processed_img_numpy)  # NumPy 배열로 저장
+            # # 2. torch 이미지 전처리 (PIL 변환 -> 텐서 변환 -> 정규화)
+            # processed_img_tensor = preprocess(processed_img)  # 텐서화 및 정규화
+            # processed_img_numpy = (processed_img_tensor.permute(1, 2, 0).numpy() * 255).astype(np.uint8)  # HWC 변환
+            # unique_images.append(processed_img_numpy)  # NumPy 배열로 저장
+            unique_images.append(processed_img)
         
         prev_hash = current_hash
         frame_index += 1
