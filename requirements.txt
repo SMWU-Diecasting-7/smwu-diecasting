@@ -1,7 +1,9 @@
-tensorflow==2.13.0
-boto3==1.28.20
-opencv-python-headless==4.5.5.64
-streamlit==1.24.0
-numpy==1.23.5
-requests==2.31.0
-python-dotenv==1.0.0
+boto3==1.35.68
+numpy==2.0.2
+opencv-python-headless==4.10.0.84
+python-dotenv==1.0.1
+requests==2.32.3
+streamlit==1.40.1
+tensorflow==2.18.0
+torch==2.5.1
+torchvision==0.20.1

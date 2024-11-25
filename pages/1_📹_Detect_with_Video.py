@@ -1,6 +1,15 @@
 import cv2
 import streamlit as st
 from utils import get_image_hash, hamming_distance, resize_and_pad_image, crop_image, apply_color_jitter, add_border, invoke_sagemaker_endpoint
+import torchvision.transforms as transforms
+import numpy as np
+
+# 이미지 전처리 - transforms
+preprocess = transforms.Compose([
+    transforms.ToPILImage(),  # OpenCV 이미지(Numpy 배열)를 PIL 이미지로 변환
+    transforms.ToTensor(),    # 텐서로 변환
+    transforms.Normalize(mean=[0.5, 0.5, 0.5], std=[0.5, 0.5, 0.5])  # 정규화
+])
 
 # 페이지 설정
 st.set_page_config(
@@ -26,11 +35,14 @@ def process_video(video_path, tolerance=5):
         current_hash = get_image_hash(frame)
         
         if prev_hash is None or (tolerance < hamming_distance(prev_hash, current_hash) < 40):
-            # 이미지 전처리
+            # opencv 이미지 전처리
             processed_img = resize_and_pad_image(
                 crop_image(apply_color_jitter(frame, brightness=1.3, contrast=1.5), 1.0)
             )
-            unique_images.append(processed_img)  # 전처리된 이미지 저장
+            # 2. torch 이미지 전처리 (PIL 변환 -> 텐서 변환 -> 정규화)
+            processed_img_tensor = preprocess(processed_img)  # 텐서화 및 정규화
+            processed_img_numpy = (processed_img_tensor.permute(1, 2, 0).numpy() * 255).astype(np.uint8)  # HWC 변환
+            unique_images.append(processed_img_numpy)  # NumPy 배열로 저장
         
         prev_hash = current_hash
         frame_index += 1

@@ -2,18 +2,32 @@ import cv2
 import streamlit as st
 import numpy as np
 from utils import resize_and_pad_image, crop_image, apply_color_jitter, invoke_sagemaker_endpoint, add_border
+import torchvision.transforms as transforms
 
 st.set_page_config(
     page_title="Detect with Image",
     page_icon="📸",
 )
 
+
+# 이미지 전처리 - transforms
+preprocess = transforms.Compose([
+    transforms.ToPILImage(),  # OpenCV 이미지(Numpy 배열)를 PIL 이미지로 변환
+    transforms.ToTensor(),    # 텐서로 변환
+    transforms.Normalize(mean=[0.5, 0.5, 0.5], std=[0.5, 0.5, 0.5])  # 정규화
+])
+
 # 이미지 전처리 함수
 def preprocess_image(image):
+    # opencv 이미지 전처리
     processed_image = resize_and_pad_image(
         crop_image(apply_color_jitter(image, brightness=1.15, contrast=1.15), crop_ratio=0.97)
     )
-    return processed_image
+
+    # 2. torch 이미지 전처리 (PIL 변환 -> 텐서 변환 -> 정규화)
+    processed_img_tensor = preprocess(processed_image)  # 텐서화 및 정규화
+    processed_img_numpy = (processed_img_tensor.permute(1, 2, 0).numpy() * 255).astype(np.uint8)  # HWC 변환
+    return processed_img_numpy
 
 # 이미지 결과 표시 함수
 def display_results(images, results):
