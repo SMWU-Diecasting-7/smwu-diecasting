@@ -99,10 +99,10 @@ def image_inference():
             processed_images = [preprocess_image(img) for img in images]
         # SageMaker 추론
         with st.spinner("Analyzing Iamges..."):
-            results = [invoke_sagemaker_endpoint("test-endpoint", img) for img in processed_images]
+            results = [invoke_sagemaker_endpoint("diecasting-model-T7-endpoint", img) for img in processed_images]
         # 결과 출력
         st.success("Inference Complete!")
-        display_results(processed_images, results)
+        display_results(images, results)
             
                 
 

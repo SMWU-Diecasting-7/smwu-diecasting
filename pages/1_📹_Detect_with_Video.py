@@ -22,6 +22,7 @@ def process_video(video_path, tolerance=5):
     cap = cv2.VideoCapture(video_path)
     prev_hash = None
     unique_images = []
+    result_images = []
     frame_index = 0
     total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
     progress_bar = st.progress(0)
@@ -35,6 +36,7 @@ def process_video(video_path, tolerance=5):
         current_hash = get_image_hash(frame)
         
         if prev_hash is None or (tolerance < hamming_distance(prev_hash, current_hash) < 40):
+            result_images.append(frame) # 결과값 출력시 이미지
             # opencv 이미지 전처리
             processed_img = resize_and_pad_image(
                 crop_image(apply_color_jitter(frame, brightness=1.3, contrast=1.5), 1.0)
@@ -50,10 +52,10 @@ def process_video(video_path, tolerance=5):
     
     cap.release()
     progress_bar.empty()
-    return unique_images
+    return unique_images, result_images
     
 # 결과 표시 함수 (5개씩 묶어서 표시)
-def display_results(unique_images, results):
+def display_results(result_images, results):
     st.subheader("Predict Result")
     
     ng_images = []
@@ -63,7 +65,7 @@ def display_results(unique_images, results):
     # 5개씩 묶어서 처리
     for i in range(0, len(results), 5):
         batch_results = results[i:i+5]  # 현재 묶음 결과
-        batch_images = unique_images[i:i+5]  # 현재 묶음 이미지
+        batch_images = result_images[i:i+5]  # 현재 묶음 이미지
         
         # 부품 상태 결정 (하나라도 NG이면 전체 NG)
         batch_status = "NG" if 0 in batch_results else "OK"
@@ -146,8 +148,9 @@ def video_inference():
     
         # 영상 이미지 추출
         with st.spinner("Extracting images from video..."):
-            unique_images = process_video(temp_video_path, tolerance=5)
+            [unique_images, result_images] = process_video(temp_video_path, tolerance=5)
             st.session_state["unique_images"] = unique_images  # 세션 상태에 저장
+            st.session_state["result_images"] = result_images # 원본 이미지 저장
             st.success(f"Total {len(unique_images)} images extraction")
         
         # SageMaker 분석
@@ -159,7 +162,7 @@ def video_inference():
             for i, image in enumerate(st.session_state["unique_images"]):
                 status_text.text(f"Processing image {i + 1}/{len(st.session_state["unique_images"])}")
                 
-                result = invoke_sagemaker_endpoint('test-endpoint', image)
+                result = invoke_sagemaker_endpoint("diecasting-model-T7-endpoint", image)
                 results.append(result)    
                 
                 # 진행률 업데이트
@@ -170,7 +173,7 @@ def video_inference():
             st.session_state["results"] = results
         
         # 분석 결과 표시
-        display_results(st.session_state["unique_images"], results)
+        display_results(st.session_state["result_images"], results)
                 
 # 프로그램 실행
 if __name__ == "__main__":

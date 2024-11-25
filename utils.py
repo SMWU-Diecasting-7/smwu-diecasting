@@ -76,7 +76,7 @@ def invoke_sagemaker_endpoint(endpoint_name, image):
     return result["predicted_class"]
 
 # 이미지 테두리 추가
-def add_border(image, color, border_thickness= 10):
+def add_border(image, color, border_thickness= 50):
     return cv2.copyMakeBorder(
         image,
         top=border_thickness,
