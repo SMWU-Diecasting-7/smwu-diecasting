@@ -1,15 +1,6 @@
 import cv2
 import streamlit as st
 from utils import get_image_hash, hamming_distance, resize_and_pad_image, crop_image, apply_color_jitter, add_border, invoke_sagemaker_endpoint
-import torchvision.transforms as transforms
-import numpy as np
-
-# 이미지 전처리 - transforms
-preprocess = transforms.Compose([
-    transforms.ToPILImage(),  # OpenCV 이미지(Numpy 배열)를 PIL 이미지로 변환
-    transforms.ToTensor(),    # 텐서로 변환
-    transforms.Normalize(mean=[0.5, 0.5, 0.5], std=[0.5, 0.5, 0.5])  # 정규화
-])
 
 # 페이지 설정
 st.set_page_config(
@@ -39,12 +30,8 @@ def process_video(video_path, tolerance=5):
             result_images.append(frame) # 결과값 출력시 이미지
             # opencv 이미지 전처리
             processed_img = resize_and_pad_image(
-                crop_image(apply_color_jitter(frame, brightness=1.3, contrast=1.5), 1.0)
+                crop_image(apply_color_jitter(frame, brightness=1.3, contrast=1.15), crop_ratio=1.0)
             )
-            # # 2. torch 이미지 전처리 (PIL 변환 -> 텐서 변환 -> 정규화)
-            # processed_img_tensor = preprocess(processed_img)  # 텐서화 및 정규화
-            # processed_img_numpy = (processed_img_tensor.permute(1, 2, 0).numpy() * 255).astype(np.uint8)  # HWC 변환
-            # unique_images.append(processed_img_numpy)  # NumPy 배열로 저장
             unique_images.append(processed_img)
         
         prev_hash = current_hash
@@ -60,8 +47,8 @@ def display_results(result_images, results):
     st.subheader("Predict Result")
     
     ng_images = []
-    ng_No = set()
-    ok_No = set()
+    ng_No = []
+    ok_No = []
 
     # 5개씩 묶어서 처리
     for i in range(0, len(results), 5):
@@ -75,9 +62,9 @@ def display_results(result_images, results):
         # 최종 결과 표시용
         part_number = i // 5 + 1
         if batch_status == "NG":
-            ng_No.add(part_number)
+            ng_No.append(part_number)
         else:
-            ok_No.add(part_number)
+            ok_No.append(part_number)
 
         # 부품 상태 표시
         st.markdown(f"### No. {i//5 + 1}: **{batch_status}**")
@@ -117,12 +104,32 @@ def display_results(result_images, results):
                 caption=f"No. {part_number} - Channel {channel_number}"
             )
     
+    
+    # # 부품별 상태를 비교하여 정확도 계산(다이케스팅.mp4용)
+    # true_classes = [1, 0, 1, 1, 0, 1, 0, 0, 1, 1, 1, 0, 1, 0, 0, 1, 0, 1, 1, 1, 1, 0, 0, 0, 0, 0, 1, 0, 1, 1, 0, 1, 0, 0, 0, 1, 0, 1, 1, 0]
+    # predicted_labels = []  # 0(NG) 또는 1(OK) 저장
+    # for i in range(1, len(true_classes) + 1):  # 1부터 총 부품 수까지
+    #     if i in ng_No:
+    #         predicted_labels.append(0)  # NG
+    #     elif i in ok_No:
+    #         predicted_labels.append(1)  # OK
+    #     else:
+    #         predicted_labels.append(-1)  # 누락된 경우 처리
+
+    # # 정확도 계산
+    # correct_predictions = sum(1 for p, g in zip(predicted_labels, true_classes) if p == g)
+    # total_parts = len(true_classes)
+    # accuracy = (correct_predictions / total_parts) * 100 if total_parts > 0 else 0.0
+    
     # 최종 NG/OK 부품 번호 출력
     st.subheader("Final Result Summary")
     if ng_No:
         st.error(f"NG Parts: {', '.join(map(str, ng_No))} (Total: {len(ng_No)})")
     if ok_No:
         st.success(f"OK Parts: {', '.join(map(str, ok_No))} (Total: {len(ok_No)})")
+        
+    # st.metric(label="Accuracy", value=f"{accuracy:.2f}%")  # 정확도 출력
+
             
 
 # 메인 함수
