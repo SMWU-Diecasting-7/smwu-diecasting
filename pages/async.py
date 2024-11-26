@@ -4,7 +4,6 @@ import streamlit as st
 import asyncio
 import numpy as np
 from concurrent.futures import ThreadPoolExecutor
-from collections import OrderedDict
 from utils import (
     get_image_hash,
     hamming_distance,
@@ -41,9 +40,6 @@ async def realtime_process_video_async(video_path, tolerance=5, frame_interval=2
     ng_detect = {}
     ok_detect = {}
 
-    # 결과 저장 (프레임 순서 유지)
-    processed_results = OrderedDict()
-
     # ThreadPoolExecutor 생성
     loop = asyncio.get_event_loop()
     executor = ThreadPoolExecutor()
@@ -79,59 +75,67 @@ async def realtime_process_video_async(video_path, tolerance=5, frame_interval=2
             frame_idx, result = await async_invoke_sagemaker(
                 frame_idx, processed_img, loop, executor
             )
+            responses = []
+
             label = "OK" if result == 1 else "NG"
             label_color = (0, 255, 0) if result == 1 else (0, 0, 255)
             bordered_frame = add_border(frame, label_color)
 
-            # 결과 저장
-            processed_results[frame_idx] = (bordered_frame, label)
+            # 응답 저장
+            responses.append((frame_idx, bordered_frame, label))
+            # 응답 정렬
+            responses.sort(key=lambda x: x[0])
 
-            # 실시간으로 출력 (프레임 순서 확인)
-            while frame_index in processed_results:
-                bordered_frame, label = processed_results.pop(frame_index)
-                current_part_images.append((bordered_frame, label))
+            for idx, (_, img, lbl) in enumerate(sorted(responses, key=lambda x: x[0])):
+                current_part_images.append((img, lbl))
 
-                # 부품 상태 확인 (5개의 이미지가 모두 채워지면)
-                if len(current_part_images) == 5:
-                    part_status = (
-                        "OK"
-                        if "NG" not in [lbl for _, lbl in current_part_images]
-                        else "NG"
+            # 실시간으로 이미지 출력
+            with realtime_container.container():
+                st.markdown(f"### No. {part_number}")
+                cols = st.columns(5)
+                for idx, (img, lbl) in enumerate(current_part_images):
+                    cols[idx].image(
+                        img,
+                        channels="BGR",
+                        caption=f"Channel {idx + 1}: {lbl}",
                     )
 
-                    # 최종 이미지 저장
-                    if part_status == "NG":
-                        ng_detect[part_number] = [
-                            img for img, lbl in current_part_images
-                        ]
-                    else:
-                        ok_detect[part_number] = [
-                            img for img, lbl in current_part_images
-                        ]
+            # 부품 상태 확인 (5개의 이미지가 모두 채워지면)
+            if len(current_part_images) == 5:
+                part_status = (
+                    "OK"
+                    if "NG" not in [lbl for _, lbl in current_part_images]
+                    else "NG"
+                )
 
-                    # 부품 상태 출력
-                    with realtime_container.container():
-                        st.markdown(f"### No. {part_number}")
-                        cols = st.columns(5)
-                        for idx, (img, lbl) in enumerate(current_part_images):
-                            cols[idx].image(
-                                img,
-                                channels="BGR",
-                                caption=f"Channel {idx + 1}: {lbl}",
-                            )
-                    with realtime_container.container():
-                        st.markdown(f"### No. {part_number} - {part_status}")
+                # 최종 이미지 저장
+                if part_status == "NG":
+                    ng_detect[part_number] = [img for img, lbl in current_part_images]
+                else:
+                    ok_detect[part_number] = [img for img, lbl in current_part_images]
 
-                    # 초기화
-                    current_part_images = []
-                    part_number += 1
+                # 부품 상태 출력
+                with realtime_container.container():
+                    st.markdown(f"### No. {part_number} - {part_status}")
+                    cols = st.columns(5)
+                    for idx, (img, lbl) in enumerate(current_part_images):
+                        cols[idx].image(
+                            img,
+                            channels="BGR",
+                            caption=f"Channel {idx + 1}: {lbl}",
+                        )
+
+                # 초기화
+                current_part_images = []
+                part_number += 1
 
     # 제한된 프레임 처리 함수 (병목 방지)
     async def limited_process_frame(frame, frame_idx):
         async with semaphore:
-            await process_frame(frame, frame_idx)
+            return await process_frame(frame, frame_idx)
 
     # 실행 함수
+    tasks = []
     while cap.isOpened():
         ret, frame = cap.read()
         if not ret:
@@ -139,12 +143,13 @@ async def realtime_process_video_async(video_path, tolerance=5, frame_interval=2
 
         # 프레임 샘플링
         if frame_index % frame_interval == 0:
-            await limited_process_frame(frame, frame_index)
+            tasks.append(limited_process_frame(frame, frame_index))
 
         frame_index += 1
 
+    await asyncio.gather(*tasks)
+
     cap.release()
-    realtime_container.empty()
     loading_message.empty()
     return ng_detect, ok_detect
 
