@@ -151,6 +151,7 @@ async def realtime_process_video_async(video_path, tolerance=5, frame_interval=2
 
     cap.release()
     loading_message.empty()
+    realtime_container.empty()
     return ng_detect, ok_detect
 
 
