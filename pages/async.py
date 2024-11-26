@@ -45,7 +45,7 @@ async def realtime_process_video_async(video_path, tolerance=5, frame_interval=2
     executor = ThreadPoolExecutor()
 
     # 병렬 작업 관리용 Semaphore
-    semaphore = asyncio.Semaphore(5)  # 최대 동시 Task 수 제한
+    semaphore = asyncio.Semaphore(10)  # 최대 동시 Task 수 제한
 
     # 실시간 이미지 출력용 컨테이너
     realtime_container = st.empty()
