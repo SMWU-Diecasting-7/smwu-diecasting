@@ -30,7 +30,7 @@ def process_video(video_path, tolerance=5):
             result_images.append(frame) # 결과값 출력시 이미지
             # opencv 이미지 전처리
             processed_img = resize_and_pad_image(
-                crop_image(apply_color_jitter(frame, brightness=1.3, contrast=1.15), crop_ratio=1.0)
+                crop_image(apply_color_jitter(frame, brightness=1.0, contrast=1.0), 1.0)
             )
             unique_images.append(processed_img)
         
@@ -105,21 +105,21 @@ def display_results(result_images, results):
             )
     
     
-    # # 부품별 상태를 비교하여 정확도 계산(다이케스팅.mp4용)
-    # true_classes = [1, 0, 1, 1, 0, 1, 0, 0, 1, 1, 1, 0, 1, 0, 0, 1, 0, 1, 1, 1, 1, 0, 0, 0, 0, 0, 1, 0, 1, 1, 0, 1, 0, 0, 0, 1, 0, 1, 1, 0]
-    # predicted_labels = []  # 0(NG) 또는 1(OK) 저장
-    # for i in range(1, len(true_classes) + 1):  # 1부터 총 부품 수까지
-    #     if i in ng_No:
-    #         predicted_labels.append(0)  # NG
-    #     elif i in ok_No:
-    #         predicted_labels.append(1)  # OK
-    #     else:
-    #         predicted_labels.append(-1)  # 누락된 경우 처리
+    # 부품별 상태를 비교하여 정확도 계산(다이케스팅.mp4용)
+    true_classes = [1, 0, 1, 1, 0, 1, 0, 0, 1, 1, 1, 0, 1, 0, 0, 1, 0, 1, 1, 1, 1, 0, 0, 0, 0, 0, 1, 0, 1, 1, 0, 1, 0, 0, 0, 1, 0, 1, 1, 0]
+    predicted_labels = []  # 0(NG) 또는 1(OK) 저장
+    for i in range(1, len(true_classes) + 1):  # 1부터 총 부품 수까지
+        if i in ng_No:
+            predicted_labels.append(0)  # NG
+        elif i in ok_No:
+            predicted_labels.append(1)  # OK
+        else:
+            predicted_labels.append(-1)  # 누락된 경우 처리
 
-    # # 정확도 계산
-    # correct_predictions = sum(1 for p, g in zip(predicted_labels, true_classes) if p == g)
-    # total_parts = len(true_classes)
-    # accuracy = (correct_predictions / total_parts) * 100 if total_parts > 0 else 0.0
+    # 정확도 계산
+    correct_predictions = sum(1 for p, g in zip(predicted_labels, true_classes) if p == g)
+    total_parts = len(true_classes)
+    accuracy = (correct_predictions / total_parts) * 100 if total_parts > 0 else 0.0
     
     # 최종 NG/OK 부품 번호 출력
     st.subheader("Final Result Summary")
@@ -128,9 +128,7 @@ def display_results(result_images, results):
     if ok_No:
         st.success(f"OK Parts: {', '.join(map(str, ok_No))} (Total: {len(ok_No)})")
         
-    # st.metric(label="Accuracy", value=f"{accuracy:.2f}%")  # 정확도 출력
-
-            
+    st.metric(label="Accuracy", value=f"{accuracy:.2f}%")  # 정확도 출력
 
 # 메인 함수
 def video_inference():
