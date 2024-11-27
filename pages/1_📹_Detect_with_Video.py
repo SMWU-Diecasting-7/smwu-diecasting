@@ -2,7 +2,7 @@ import os
 import cv2
 import streamlit as st
 import asyncio
-import numpy as np
+import boto3
 import time
 from concurrent.futures import ThreadPoolExecutor
 from utils import (
@@ -104,11 +104,11 @@ async def realtime_process_video_async(video_path, tolerance=5, frame_interval=2
                 # 최종 이미지 저장
                 if part_status == "NG":
                     ng_detect[part_number] = [
-                        img for _, img, lbl in current_part_images
+                        (img, lbl) for _, img, lbl in current_part_images
                     ]
                 else:
                     ok_detect[part_number] = [
-                        img for _, img, lbl in current_part_images
+                        (img, lbl) for _, img, lbl in current_part_images
                     ]
 
                 # 부품 상태 출력
@@ -171,12 +171,18 @@ def show_result_details(detect, status):
         st.write(f"Showing {status} Images for Part {selected_part}")
         images = get_cached_images(detect, selected_part)
         cols = st.columns(5)
-        for idx, image in enumerate(images):
+        for idx, (image, label) in enumerate(images):
             cols[idx % 5].image(
                 image,
                 channels="BGR",
-                caption=f"Part {selected_part} - Channel {idx + 1}",
+                caption=f"Part {selected_part} - Channel {idx + 1}: {label}",
             )
+
+
+def upload_results_to_s3(ng_detect, ok_detect):
+    s3 = boto3.client("s3")
+
+    upload_time = time.strftime("%Y%m%d_%H%M%S")
 
 
 # 메인 함수
