@@ -32,8 +32,13 @@ def fetch_results_from_s3(bucket_name, prefix):
         for obj in response["Contents"]:
             key = obj["Key"]
             if key.endswith(".json"):
-                json_data = s3.get_object(Bucket=bucket_name, Key=key)["Body"].read()
-                results.append(json.loads(json_data))
+                try:
+                    json_data = s3.get_object(Bucket=bucket_name, Key=key)["Body"].read()
+                    results.append(json.loads(json_data))
+                except json.JSONDecodeError:
+                    st.error(f"Failed to decode JSON for {key}")
+                except Exception as e:
+                    st.error(f"Error fetching data for {key}: {str(e)}")
     return results
 
 # 히스토리 데이터 표시 함수
@@ -43,10 +48,13 @@ def display_history(results):
         return
 
     for result in results:
-        with st.expander(f"Results for {result['video_name']}"):
-            st.subheader(f"Video Name: {result['video_name']}")
-            st.error(f"NG Parts: {result['ng_parts']}")
-            st.success(f"OK Parts: {result['ok_parts']}")
+        if isinstance(result, dict) and "video_name" in result and "ng_parts" in result and "ok_parts" in result:
+            with st.expander(f"Results for {result['video_name']}"):
+                st.subheader(f"Video Name: {result['video_name']}")
+                st.error(f"NG Parts: {result['ng_parts']}")
+                st.success(f"OK Parts: {result['ok_parts']}")
+        else:
+            st.error("Invalid data format detected in history results.")
 
 # 메인 함수
 def main():
@@ -65,4 +73,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-

@@ -192,9 +192,26 @@ def get_s3_client():
 # S3에 결과 저장
 def upload_results_to_s3(bucket_name, key, data):
     s3 = get_s3_client()
-    s3.put_object(Bucket=bucket_name, Key=key, Body=json.dumps(data), ContentType="application/json")
+    s3.put_object(
+        Bucket=bucket_name,
+        Key=key,
+        Body=json.dumps(data),
+        ContentType="application/json",
+    )
 
-# S3에서 결과 불러오기
+# S3에 이미지 업로드
+def upload_image_to_s3(bucket_name, key, image):
+    _, img_encoded = cv2.imencode(".jpg", image)
+    s3 = get_s3_client()
+    s3.put_object(
+        Bucket=bucket_name,
+        Key=key,
+        Body=img_encoded.tobytes(),
+        ContentType="image/jpeg",
+    )
+    return f"s3://{bucket_name}/{key}"
+
+# S3에서 JSON 데이터 불러오기
 def fetch_results_from_s3(bucket_name, prefix):
     s3 = get_s3_client()
     response = s3.list_objects_v2(Bucket=bucket_name, Prefix=prefix)
@@ -207,6 +224,26 @@ def fetch_results_from_s3(bucket_name, prefix):
                 json_data = s3.get_object(Bucket=bucket_name, Key=key)["Body"].read()
                 results.append(json.loads(json_data))
     return results
+
+# 결과를 라벨별로 저장
+def save_results_with_images_to_s3(
+    bucket_name, video_name, ng_images, ok_images
+):
+    result_data = {"video_name": video_name, "ng_parts": [], "ok_parts": []}
+
+    for idx, image in enumerate(ng_images):
+        key = f"results/{video_name}/NG_part_{idx + 1}.jpg"
+        image_url = upload_image_to_s3(bucket_name, key, image)
+        result_data["ng_parts"].append({"part_number": idx + 1, "image_url": image_url})
+
+    for idx, image in enumerate(ok_images):
+        key = f"results/{video_name}/OK_part_{idx + 1}.jpg"
+        image_url = upload_image_to_s3(bucket_name, key, image)
+        result_data["ok_parts"].append({"part_number": idx + 1, "image_url": image_url})
+
+    # JSON 데이터 저장
+    json_key = f"results/{video_name}/results.json"
+    upload_results_to_s3(bucket_name, json_key, result_data)
 
 # 메인 함수
 def realtime_video_inference():
