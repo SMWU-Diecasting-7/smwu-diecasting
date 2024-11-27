@@ -50,10 +50,6 @@ async def realtime_process_video_async(video_path, tolerance=5, frame_interval=2
     # 실시간 이미지 출력용 컨테이너
     realtime_container = st.empty()
 
-    # 로딩 메시지 표시
-    loading_message = st.empty()
-    loading_message.text("Processing video frames...")
-
     async def process_frame(frame, frame_idx):
         """단일 프레임 처리"""
         nonlocal prev_hash, current_part_images, part_number
@@ -75,25 +71,21 @@ async def realtime_process_video_async(video_path, tolerance=5, frame_interval=2
             frame_idx, result = await async_invoke_sagemaker(
                 frame_idx, processed_img, loop, executor
             )
-            responses = []
 
             label = "OK" if result == 1 else "NG"
             label_color = (0, 255, 0) if result == 1 else (0, 0, 255)
             bordered_frame = add_border(frame, label_color)
 
             # 응답 저장
-            responses.append((frame_idx, bordered_frame, label))
-            # 응답 정렬
-            responses.sort(key=lambda x: x[0])
-
-            for idx, (_, img, lbl) in enumerate(sorted(responses, key=lambda x: x[0])):
-                current_part_images.append((img, lbl))
+            current_part_images.append((frame_idx, bordered_frame, label))
+            # 프레임 번호 기준으로 정렬
+            current_part_images.sort(key=lambda x: x[0])
 
             # 실시간으로 이미지 출력
             with realtime_container.container():
                 st.markdown(f"### No. {part_number}")
                 cols = st.columns(5)
-                for idx, (img, lbl) in enumerate(current_part_images):
+                for idx, (_, img, lbl) in enumerate(current_part_images):
                     cols[idx].image(
                         img,
                         channels="BGR",
@@ -104,21 +96,25 @@ async def realtime_process_video_async(video_path, tolerance=5, frame_interval=2
             if len(current_part_images) == 5:
                 part_status = (
                     "OK"
-                    if "NG" not in [lbl for _, lbl in current_part_images]
+                    if "NG" not in [lbl for _, _, lbl in current_part_images]
                     else "NG"
                 )
 
                 # 최종 이미지 저장
                 if part_status == "NG":
-                    ng_detect[part_number] = [img for img, lbl in current_part_images]
+                    ng_detect[part_number] = [
+                        img for _, img, lbl in current_part_images
+                    ]
                 else:
-                    ok_detect[part_number] = [img for img, lbl in current_part_images]
+                    ok_detect[part_number] = [
+                        img for _, img, lbl in current_part_images
+                    ]
 
                 # 부품 상태 출력
                 with realtime_container.container():
                     st.markdown(f"### No. {part_number} - {part_status}")
                     cols = st.columns(5)
-                    for idx, (img, lbl) in enumerate(current_part_images):
+                    for idx, (_, img, lbl) in enumerate(current_part_images):
                         cols[idx].image(
                             img,
                             channels="BGR",
@@ -127,6 +123,7 @@ async def realtime_process_video_async(video_path, tolerance=5, frame_interval=2
 
                 # 초기화
                 current_part_images = []
+                realtime_container.empty()
                 part_number += 1
 
     # 제한된 프레임 처리 함수 (병목 방지)
@@ -150,7 +147,6 @@ async def realtime_process_video_async(video_path, tolerance=5, frame_interval=2
     await asyncio.gather(*tasks)
 
     cap.release()
-    loading_message.empty()
     realtime_container.empty()
     return ng_detect, ok_detect
 
@@ -193,12 +189,15 @@ def realtime_video_inference():
         st.success(f"Complete Upload File : {uploaded_file.name}")
         st.video(temp_video_path, autoplay=True, muted=True)
 
-        # 추론 결과가 없는 경우에만 추론 실행
-        if not (st.session_state["ng_detect"] and st.session_state["ok_detect"]):
-            (
-                st.session_state["ng_detect"],
-                st.session_state["ok_detect"],
-            ) = asyncio.run(realtime_process_video_async(temp_video_path, tolerance=5))
+        with st.spinner("Anlayzing video"):
+            # 추론 결과가 없는 경우에만 추론 실행
+            if not (st.session_state["ng_detect"] and st.session_state["ok_detect"]):
+                (
+                    st.session_state["ng_detect"],
+                    st.session_state["ok_detect"],
+                ) = asyncio.run(
+                    realtime_process_video_async(temp_video_path, tolerance=5)
+                )
 
         # 결과 출력
         st.subheader("Final Result Summary")
