@@ -191,7 +191,7 @@ def realtime_video_inference():
         with open(temp_video_path, "wb") as f:
             f.write(uploaded_file.getbuffer())
         st.success(f"Complete Upload File : {uploaded_file.name}")
-        st.video(temp_video_path)
+        st.video(temp_video_path, autoplay=True, muted=True)
 
         # 추론 결과가 없는 경우에만 추론 실행
         if not (st.session_state["ng_detect"] and st.session_state["ok_detect"]):
