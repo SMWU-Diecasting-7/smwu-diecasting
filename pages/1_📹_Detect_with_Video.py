@@ -14,6 +14,8 @@ from utils import (
     add_border,
     invoke_sagemaker_endpoint,
 )
+import json
+import boto3
 
 st.set_page_config(page_title="Realtime Detect Video", page_icon="📹")
 
@@ -178,10 +180,41 @@ def show_result_details(detect, status):
                 caption=f"Part {selected_part} - Channel {idx + 1}",
             )
 
+# S3 클라이언트 생성
+def get_s3_client():
+    return boto3.client(
+        "s3",
+        aws_access_key_id=os.getenv("AWS_ACCESS_KEY_ID"),
+        aws_secret_access_key=os.getenv("AWS_SECRET_ACCESS_KEY"),
+        region_name=os.getenv("AWS_REGION"),
+    )
+
+# S3에 결과 저장
+def upload_results_to_s3(bucket_name, key, data):
+    s3 = get_s3_client()
+    s3.put_object(Bucket=bucket_name, Key=key, Body=json.dumps(data), ContentType="application/json")
+
+# S3에서 결과 불러오기
+def fetch_results_from_s3(bucket_name, prefix):
+    s3 = get_s3_client()
+    response = s3.list_objects_v2(Bucket=bucket_name, Prefix=prefix)
+
+    results = []
+    if "Contents" in response:
+        for obj in response["Contents"]:
+            key = obj["Key"]
+            if key.endswith(".json"):
+                json_data = s3.get_object(Bucket=bucket_name, Key=key)["Body"].read()
+                results.append(json.loads(json_data))
+    return results
 
 # 메인 함수
 def realtime_video_inference():
     st.title("Real-time NG/OK Detection with Video")
+
+    # S3 버킷 정보
+    bucket_name = "cv-7-video"
+    results_prefix = "results/"
 
     uploaded_file = st.file_uploader("Choose a video file", type=["mp4", "mov", "avi"])
 
@@ -209,13 +242,20 @@ def realtime_video_inference():
 
         if not st.session_state.analysis_done:
             with st.spinner("Anlayzing video"):
-                (
-                    ng_detect,
-                    ok_detect,
-                ) = asyncio.run(
+                ng_detect, ok_detect = asyncio.run(
                     realtime_process_video_async(temp_video_path, tolerance=5)
                 )
                 st.session_state.analysis_done = True
+
+                # 결과를 S3에 저장
+                result_data = {
+                    "video_name": uploaded_file.name,
+                    "ng_parts": list(ng_detect.keys()),
+                    "ok_parts": list(ok_detect.keys()),
+                }
+                result_key = f"{results_prefix}{uploaded_file.name}.json"
+                upload_results_to_s3(bucket_name, result_key, result_data)
+                st.success(f"Results saved to S3: {result_key}")
 
         # 결과 출력
         st.subheader("Final Result Summary")
