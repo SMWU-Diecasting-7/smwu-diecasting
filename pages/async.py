@@ -3,6 +3,7 @@ import cv2
 import streamlit as st
 import asyncio
 import numpy as np
+import time
 from concurrent.futures import ThreadPoolExecutor
 from utils import (
     get_image_hash,
@@ -151,18 +152,26 @@ async def realtime_process_video_async(video_path, tolerance=5, frame_interval=2
     return ng_detect, ok_detect
 
 
-# 결과 표시 함수
+@st.cache_data
+def get_cached_images(detect, part_number):
+    return detect[part_number]
+
+
 def show_result_details(detect, status):
     container = st.container()
     with container:
         st.subheader(f"{status} Detailed Images")
         selected_part = st.selectbox(
-            f"Select Part to View {status} Images", options=list(detect.keys())
+            f"Select Part to View {status} Images",
+            options=list(detect.keys()),
+            key=f"select_{status}",
         )
+
     if selected_part:
         st.write(f"Showing {status} Images for Part {selected_part}")
+        images = get_cached_images(detect, selected_part)
         cols = st.columns(5)
-        for idx, image in enumerate(detect[selected_part]):
+        for idx, image in enumerate(images):
             cols[idx % 5].image(
                 image,
                 channels="BGR",
@@ -177,38 +186,54 @@ def realtime_video_inference():
     uploaded_file = st.file_uploader("Choose a video file", type=["mp4", "mov", "avi"])
 
     # 세션 상태 초기화
-    if "ng_detect" not in st.session_state:
-        st.session_state["ng_detect"] = {}
-    if "ok_detect" not in st.session_state:
-        st.session_state["ok_detect"] = {}
+    if "upload_time" not in st.session_state:
+        st.session_state.upload_time = None  # 업로드 시간 저장
+    if "analysis_done" not in st.session_state:
+        st.session_state.analysis_done = False  # 분석 상태 추적
 
     if uploaded_file is not None:
+        current_upload_time = time.strftime("%Y%m%d_%H%M%S")  # 현재 업로드 시간
+        # 새 파일 업로드 이벤트 처리
+        if st.session_state.upload_time != current_upload_time:
+            # 상태 초기화
+            st.session_state.upload_time = current_upload_time
+            st.session_state.analysis_done = False
+
         temp_video_path = f"temp_{uploaded_file.name}"
         with open(temp_video_path, "wb") as f:
             f.write(uploaded_file.getbuffer())
-        st.success(f"Complete Upload File : {uploaded_file.name}")
+        st.success(
+            f"Complete Upload File : {uploaded_file.name} ({st.session_state['upload_time']})"
+        )
         st.video(temp_video_path, autoplay=True, muted=True)
 
-        with st.spinner("Anlayzing video"):
-            # 추론 결과가 없는 경우에만 추론 실행
-            if not (st.session_state["ng_detect"] and st.session_state["ok_detect"]):
+        if not st.session_state.analysis_done:
+            with st.spinner("Anlayzing video"):
                 (
-                    st.session_state["ng_detect"],
-                    st.session_state["ok_detect"],
+                    ng_detect,
+                    ok_detect,
                 ) = asyncio.run(
                     realtime_process_video_async(temp_video_path, tolerance=5)
                 )
+                st.session_state.analysis_done = True
 
         # 결과 출력
         st.subheader("Final Result Summary")
-        st.error(f"Total NG Parts: {list(st.session_state['ng_detect'].keys())}")
-        st.success(f"Total OK Parts: {list(st.session_state['ok_detect'].keys())}")
+        st.error(f"Total {len(ng_detect.keys())} NG Parts: {list(ng_detect.keys())}")
+        st.success(f"Total {len(ok_detect.keys())} OK Parts: {list(ok_detect.keys())}")
 
-        # 상세 결과 표시
-        if len(st.session_state["ng_detect"]) > 0:
-            show_result_details(st.session_state["ng_detect"], "NG")
-        if len(st.session_state["ok_detect"]) > 0:
-            show_result_details(st.session_state["ok_detect"], "OK")
+        @st.fragment
+        def show_ng_section():
+            if len(ng_detect) > 0:
+                show_result_details(ng_detect, "NG")
+
+        @st.fragment
+        def show_ok_section():
+            if len(ok_detect) > 0:
+                show_result_details(ok_detect, "OK")
+
+        show_ng_section()
+        show_ok_section()
 
         # 삭제: 분석이 끝난 후 임시 파일 삭제
         if os.path.exists(temp_video_path):
