@@ -1,5 +1,10 @@
+import os
 import cv2
 import streamlit as st
+import asyncio
+import numpy as np
+import time
+from concurrent.futures import ThreadPoolExecutor
 from utils import (
     get_image_hash,
     hamming_distance,
@@ -10,237 +15,230 @@ from utils import (
     invoke_sagemaker_endpoint,
 )
 
-# 페이지 설정
-st.set_page_config(
-    page_title="Detect with Video",
-    page_icon="📹",
-)
+st.set_page_config(page_title="Realtime Detect Video", page_icon="📹")
 
 
-# 영상 이미지 처리 함수
-def process_video(video_path, tolerance=5):
+# 비동기로 SageMaker 호출
+async def async_invoke_sagemaker(frame_idx, processed_img, loop, executor):
+    result = await loop.run_in_executor(
+        executor,
+        invoke_sagemaker_endpoint,
+        "diecasting-model-T7-endpoint",
+        processed_img,
+    )
+    return frame_idx, result
+
+
+async def realtime_process_video_async(video_path, tolerance=5, frame_interval=2):
     cap = cv2.VideoCapture(video_path)
     prev_hash = None
-    unique_images = []
-    result_images = []
-    frame_index = 0
-    total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-    progress_bar = st.progress(0)
 
+    frame_index = 0
+    part_number = 1
+    total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+
+    current_part_images = []  # 현재 부품 이미지 저장
+    ng_detect = {}
+    ok_detect = {}
+
+    # ThreadPoolExecutor 생성
+    loop = asyncio.get_event_loop()
+    executor = ThreadPoolExecutor()
+
+    # 병렬 작업 관리용 Semaphore
+    semaphore = asyncio.Semaphore(10)  # 최대 동시 Task 수 제한
+
+    # 실시간 이미지 출력용 컨테이너
+    realtime_container = st.empty()
+
+    async def process_frame(frame, frame_idx):
+        """단일 프레임 처리"""
+        nonlocal prev_hash, current_part_images, part_number
+
+        current_hash = get_image_hash(frame)
+
+        # 중복 프레임 제거
+        if prev_hash is None or (
+            tolerance < hamming_distance(prev_hash, current_hash) < 40
+        ):
+            prev_hash = current_hash
+
+            # opencv 이미지 전처리
+            processed_img = resize_and_pad_image(
+                crop_image(apply_color_jitter(frame, brightness=1.0, contrast=1.0), 1.0)
+            )
+
+            # 비동기로 SageMaker 호출
+            frame_idx, result = await async_invoke_sagemaker(
+                frame_idx, processed_img, loop, executor
+            )
+
+            label = "OK" if result == 1 else "NG"
+            label_color = (0, 255, 0) if result == 1 else (0, 0, 255)
+            bordered_frame = add_border(frame, label_color)
+
+            # 응답 저장
+            current_part_images.append((frame_idx, bordered_frame, label))
+            # 프레임 번호 기준으로 정렬
+            current_part_images.sort(key=lambda x: x[0])
+
+            # 실시간으로 이미지 출력
+            with realtime_container.container():
+                st.markdown(f"### No. {part_number}")
+                cols = st.columns(5)
+                for idx, (_, img, lbl) in enumerate(current_part_images):
+                    cols[idx].image(
+                        img,
+                        channels="BGR",
+                        caption=f"Channel {idx + 1}: {lbl}",
+                    )
+
+            # 부품 상태 확인 (5개의 이미지가 모두 채워지면)
+            if len(current_part_images) == 5:
+                part_status = (
+                    "OK"
+                    if "NG" not in [lbl for _, _, lbl in current_part_images]
+                    else "NG"
+                )
+
+                # 최종 이미지 저장
+                if part_status == "NG":
+                    ng_detect[part_number] = [
+                        img for _, img, lbl in current_part_images
+                    ]
+                else:
+                    ok_detect[part_number] = [
+                        img for _, img, lbl in current_part_images
+                    ]
+
+                # 부품 상태 출력
+                with realtime_container.container():
+                    st.markdown(f"### No. {part_number} - {part_status}")
+                    cols = st.columns(5)
+                    for idx, (_, img, lbl) in enumerate(current_part_images):
+                        cols[idx].image(
+                            img,
+                            channels="BGR",
+                            caption=f"Channel {idx + 1}: {lbl}",
+                        )
+
+                # 초기화
+                current_part_images = []
+                realtime_container.empty()
+                part_number += 1
+
+    # 제한된 프레임 처리 함수 (병목 방지)
+    async def limited_process_frame(frame, frame_idx):
+        async with semaphore:
+            return await process_frame(frame, frame_idx)
+
+    # 실행 함수
+    tasks = []
     while cap.isOpened():
         ret, frame = cap.read()
         if not ret:
             break  # 영상 끝에 도달한 경우
 
-        # 현재 프레임의 해시 값 계산
-        current_hash = get_image_hash(frame)
+        # 프레임 샘플링
+        if frame_index % frame_interval == 0:
+            tasks.append(limited_process_frame(frame, frame_index))
 
-        if prev_hash is None or (
-            tolerance < hamming_distance(prev_hash, current_hash) < 40
-        ):
-            result_images.append(frame)  # 결과값 출력시 이미지
-            # opencv 이미지 전처리
-            processed_img = resize_and_pad_image(
-                crop_image(apply_color_jitter(frame, brightness=1.0, contrast=1.0), 1.0)
-            )
-            unique_images.append(processed_img)
-
-        prev_hash = current_hash
         frame_index += 1
-        progress_bar.progress(frame_index / total_frames)
+
+    await asyncio.gather(*tasks)
 
     cap.release()
-    progress_bar.empty()
-    return unique_images, result_images
+    realtime_container.empty()
+    return ng_detect, ok_detect
 
 
-# 결과 표시 함수 (5개씩 묶어서 표시)
-def display_results(result_images, results):
-    st.subheader("Predict Result")
+@st.cache_data
+def get_cached_images(detect, part_number):
+    return detect[part_number]
 
-    ng_images = []
-    ng_No = []
-    ok_No = []
 
-    # 5개씩 묶어서 처리
-    for i in range(0, len(results), 5):
-        batch_results = results[i : i + 5]  # 현재 묶음 결과
-        batch_images = result_images[i : i + 5]  # 현재 묶음 이미지
+def show_result_details(detect, status):
+    container = st.container()
+    with container:
+        st.subheader(f"{status} Detailed Images")
+        selected_part = st.selectbox(
+            f"Select Part to View {status} Images",
+            options=list(detect.keys()),
+            key=f"select_{status}",
+        )
 
-        # 부품 상태 결정 (하나라도 NG이면 전체 NG)
-        batch_status = "NG" if 0 in batch_results else "OK"
-        color = (0, 255, 0) if batch_status == "OK" else (0, 0, 255)
-
-        # 최종 결과 표시용
-        part_number = i // 5 + 1
-        if batch_status == "NG":
-            ng_No.append(part_number)
-        else:
-            ok_No.append(part_number)
-
-        # 부품 상태 표시
-        st.markdown(f"### No. {i//5 + 1}: **{batch_status}**")
-
+    if selected_part:
+        st.write(f"Showing {status} Images for Part {selected_part}")
+        images = get_cached_images(detect, selected_part)
         cols = st.columns(5)
-        # 각 이미지에 결과 표시
-        for j, (image, status) in enumerate(zip(batch_images, batch_results)):
-            label = "OK" if status == 1 else "NG"
-            label_color = (0, 255, 0) if status == 1 else (0, 0, 255)
-
-            # NG 이미지 저장
-            if status == 0:
-                ng_images.append((image, i + j))
-
-            bordered_image = add_border(image, label_color)
-            part_number = (i + j) // 5 + 1
-            channel_number = (i + j) % 5 + 1
-            cols[j].image(
-                bordered_image,
-                channels="BGR",
-                caption=f"Part {part_number} - Channel {channel_number} ({label})",
-            )
-    # NG 이미지만 추가 출력
-    if ng_images:
-        st.subheader("Final NG Images")
-        cols = st.columns(5)
-        for idx, (ng_image, ng_index) in enumerate(ng_images):
-            part_number = ng_index // 5 + 1
-            channel_number = ng_index % 5 + 1
-
-            bordered_ng_image = add_border(ng_image, (0, 0, 255))
-
-            # 이미지 출력: 부품 번호와 채널 번호 표시
+        for idx, image in enumerate(images):
             cols[idx % 5].image(
-                bordered_ng_image,
+                image,
                 channels="BGR",
-                caption=f"No. {part_number} - Channel {channel_number}",
+                caption=f"Part {selected_part} - Channel {idx + 1}",
             )
-
-    # 부품별 상태를 비교하여 정확도 계산(다이케스팅.mp4용)
-    true_classes = [
-        1,
-        0,
-        1,
-        1,
-        0,
-        1,
-        0,
-        0,
-        1,
-        1,
-        1,
-        0,
-        1,
-        0,
-        0,
-        1,
-        0,
-        1,
-        1,
-        1,
-        1,
-        0,
-        0,
-        0,
-        0,
-        0,
-        1,
-        0,
-        1,
-        1,
-        0,
-        1,
-        0,
-        0,
-        0,
-        1,
-        0,
-        1,
-        1,
-        0,
-    ]
-    predicted_labels = []  # 0(NG) 또는 1(OK) 저장
-    for i in range(1, len(true_classes) + 1):  # 1부터 총 부품 수까지
-        if i in ng_No:
-            predicted_labels.append(0)  # NG
-        elif i in ok_No:
-            predicted_labels.append(1)  # OK
-        else:
-            predicted_labels.append(-1)  # 누락된 경우 처리
-
-    # 정확도 계산
-    correct_predictions = sum(
-        1 for p, g in zip(predicted_labels, true_classes) if p == g
-    )
-    total_parts = len(true_classes)
-    accuracy = (correct_predictions / total_parts) * 100 if total_parts > 0 else 0.0
-
-    # 최종 NG/OK 부품 번호 출력
-    st.subheader("Final Result Summary")
-    if ng_No:
-        st.error(f"NG Parts: {', '.join(map(str, ng_No))} (Total: {len(ng_No)})")
-    if ok_No:
-        st.success(f"OK Parts: {', '.join(map(str, ok_No))} (Total: {len(ok_No)})")
-
-    st.metric(label="Accuracy", value=f"{accuracy:.2f}%")  # 정확도 출력
 
 
 # 메인 함수
-def video_inference():
-    # Streamlit 애플리케이션
-    st.title("Real-time NG/OK Video Classification")
-
-    # 고유 프레임 저장용 세션 상태 초기화
-    if "unique_images" not in st.session_state:
-        st.session_state["unique_images"] = []
+def realtime_video_inference():
+    st.title("Real-time NG/OK Detection with Video")
 
     uploaded_file = st.file_uploader("Choose a video file", type=["mp4", "mov", "avi"])
 
+    # 세션 상태 초기화
+    if "upload_time" not in st.session_state:
+        st.session_state.upload_time = None  # 업로드 시간 저장
+    if "analysis_done" not in st.session_state:
+        st.session_state.analysis_done = False  # 분석 상태 추적
+
     if uploaded_file is not None:
-        # 업로드된 비디오를 임시 파일로 저장
+        current_upload_time = time.strftime("%Y%m%d_%H%M%S")  # 현재 업로드 시간
+        # 새 파일 업로드 이벤트 처리
+        if st.session_state.upload_time != current_upload_time:
+            # 상태 초기화
+            st.session_state.upload_time = current_upload_time
+            st.session_state.analysis_done = False
+
         temp_video_path = f"temp_{uploaded_file.name}"
         with open(temp_video_path, "wb") as f:
             f.write(uploaded_file.getbuffer())
-        st.success(f"Complete Upload File : {uploaded_file.name}")
-
-        # 업로드 출력
-        st.subheader("Uploaded Video")
+        st.success(
+            f"Complete Upload File : {uploaded_file.name} ({st.session_state['upload_time']})"
+        )
         st.video(temp_video_path, autoplay=True, muted=True)
 
-        # 영상 이미지 추출
-        with st.spinner("Extracting images from video..."):
-            [unique_images, result_images] = process_video(temp_video_path, tolerance=5)
-            st.session_state["unique_images"] = unique_images  # 세션 상태에 저장
-            st.session_state["result_images"] = result_images  # 원본 이미지 저장
-            st.success(f"Total {len(unique_images)} images extraction")
-
-        # SageMaker 분석
-        with st.spinner("Analyzing images with SageMaker..."):
-            progress_bar = st.progress(0)  # 진행바
-            status_text = st.empty()  # 상태 메시지 표시용
-
-            results = []
-            for i, image in enumerate(st.session_state["unique_images"]):
-                status_text.text(
-                    f"Processing image {i + 1}/{len(st.session_state["unique_images"])}"
+        if not st.session_state.analysis_done:
+            with st.spinner("Anlayzing video"):
+                (
+                    ng_detect,
+                    ok_detect,
+                ) = asyncio.run(
+                    realtime_process_video_async(temp_video_path, tolerance=5)
                 )
+                st.session_state.analysis_done = True
 
-                result = invoke_sagemaker_endpoint(
-                    "diecasting-model-T7-endpoint", image
-                )
-                results.append(result)
+        # 결과 출력
+        st.subheader("Final Result Summary")
+        st.error(f"Total {len(ng_detect.keys())} NG Parts: {list(ng_detect.keys())}")
+        st.success(f"Total {len(ok_detect.keys())} OK Parts: {list(ok_detect.keys())}")
 
-                # 진행률 업데이트
-                progress_bar.progress((i + 1) / len(st.session_state["unique_images"]))
+        @st.fragment
+        def show_ng_section():
+            if len(ng_detect) > 0:
+                show_result_details(ng_detect, "NG")
 
-            progress_bar.empty()
-            status_text.text("All images processed!")
-            st.session_state["results"] = results
+        @st.fragment
+        def show_ok_section():
+            if len(ok_detect) > 0:
+                show_result_details(ok_detect, "OK")
 
-        # 분석 결과 표시
-        display_results(st.session_state["result_images"], results)
+        show_ng_section()
+        show_ok_section()
+
+        # 삭제: 분석이 끝난 후 임시 파일 삭제
+        if os.path.exists(temp_video_path):
+            os.remove(temp_video_path)
 
 
-# 프로그램 실행
 if __name__ == "__main__":
-    video_inference()
+    realtime_video_inference()
