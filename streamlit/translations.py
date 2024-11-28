@@ -95,7 +95,7 @@ translations = {
             "ok_part": "OK 부품",
         },
         "history": {
-            "title": "분석 기록",
+            "title": "분석 이력",
             "description": "이전에 분석된 비디오와 이미지 결과를 확인하세요.",
             "select_history": "세부 정보를 볼 기록을 선택하세요.",
         },
