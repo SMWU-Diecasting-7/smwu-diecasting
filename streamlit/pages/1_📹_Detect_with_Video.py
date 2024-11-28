@@ -2,7 +2,7 @@ import os
 import cv2
 import streamlit as st
 import asyncio
-import boto3
+import unicodedata
 import time
 from concurrent.futures import ThreadPoolExecutor
 from translations import init_language, set_language, translations
@@ -186,10 +186,72 @@ def show_result_details(detect, status):
             )
 
 
-def upload_results_to_s3(ng_detect, ok_detect):
-    s3 = boto3.client("s3")
+def print_accuracy(ng_detect, ok_detect, text):
+    # 부품별 상태를 비교하여 정확도 계산(다이케스팅.mp4용)
+    true_classes = [
+        1,
+        0,
+        1,
+        1,
+        0,
+        1,
+        0,
+        0,
+        1,
+        1,
+        1,
+        0,
+        1,
+        0,
+        0,
+        1,
+        0,
+        1,
+        1,
+        1,
+        1,
+        0,
+        0,
+        0,
+        0,
+        0,
+        1,
+        0,
+        1,
+        1,
+        0,
+        1,
+        0,
+        0,
+        0,
+        1,
+        0,
+        1,
+        1,
+        0,
+    ]
+    predicted_labels = []  # 0(NG) 또는 1(OK) 저장
+    predicted_length = len(ng_detect.keys()) + len(ok_detect.keys())
+    for i in range(1, predicted_length + 1):  # 1부터 총 분석 부품 수까지
+        if i in ng_detect:
+            predicted_labels.append(0)  # NG
+        elif i in ok_detect:
+            predicted_labels.append(1)  # OK
+        else:
+            predicted_labels.append(-1)  # 누락된 경우
 
-    upload_time = time.strftime("%Y%m%d_%H%M%S")
+    # 정확도 계산
+    correct_predictions = sum(
+        1 for p, g in zip(predicted_labels, true_classes) if p == g
+    )
+
+    accuracy = (
+        (correct_predictions / predicted_length) * 100 if predicted_length > 0 else 0.0
+    )
+
+    # 정확도 출력
+    st.metric(label=text["accuracy"], value=f"{accuracy:.2f}%")
+    # st.subheader(f"{text['accuracy']} : {accuracy:.2f}%")
 
 
 # 메인 함수
@@ -206,6 +268,10 @@ def realtime_video_inference():
 
     if uploaded_file is not None:
         current_upload_time = time.strftime("%Y%m%d_%H%M%S")  # 현재 업로드 시간
+        # 이름 인식용 정규화
+        normalized_name = (
+            unicodedata.normalize("NFC", uploaded_file.name).lower().strip()
+        )
         # 새 파일 업로드 이벤트 처리
         if st.session_state.upload_time != current_upload_time:
             # 상태 초기화
@@ -231,6 +297,10 @@ def realtime_video_inference():
                 st.session_state.analysis_done = True
 
         # 결과 출력
+        # 해당 비디오에만 정확도 출력
+        if "다이케스팅" in normalized_name:
+            print_accuracy(ng_detect, ok_detect, text)
+
         st.subheader(text["summary"])
         if len(ng_detect.keys()) > 0:
             if current_language == "en":
