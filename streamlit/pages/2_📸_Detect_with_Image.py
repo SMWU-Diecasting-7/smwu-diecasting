@@ -1,6 +1,7 @@
 import cv2
 import streamlit as st
 import numpy as np
+from translations import init_language, set_language, translations
 from utils import (
     resize_and_pad_image,
     crop_image,
@@ -13,6 +14,12 @@ st.set_page_config(
     page_title="Detect with Image",
     page_icon="📸",
 )
+
+# 언어 초기화 및 선택
+init_language()
+set_language()
+current_language = st.session_state["language"]
+text = translations[current_language]["image"]
 
 
 # 이미지 전처리 함수
@@ -29,7 +36,7 @@ def preprocess_image(image):
 
 # 이미지 결과 표시 함수
 def display_results(images, results):
-    st.subheader("Predict Result")
+    st.subheader(text["predict"])
 
     ng_images = []
     ng_No = []
@@ -56,7 +63,7 @@ def display_results(images, results):
 
     # NG 이미지 추가 출력
     if ng_images:
-        st.subheader("Final NG Parts")
+        st.subheader(text["final_ng"])
         cols = st.columns(5)
         for idx, (ng_image, ng_no) in enumerate(zip(ng_images, ng_No)):
             bordered_ng_image = add_border(ng_image, (0, 0, 255))
@@ -65,24 +72,40 @@ def display_results(images, results):
             )
 
     # 최종 결과
-    st.subheader("Final Result Summary")
+    st.subheader(text["summary"])
     if ng_No:
-        st.error(f"NG Parts: {', '.join(map(str, ng_No))} (Total: {len(ng_No)})")
+        if current_language == "en":
+            st.error(
+                f"NG {text['parts']}: {', '.join(map(str, ng_No))} ({text['total']}: {len(ng_No)})"
+            )
+        elif current_language == "kr":
+            st.error(
+                f"NG {text['parts']}: {', '.join(map(str, ng_No))} ({text['total']} {len(ng_No)} 개)"
+            )
+
     if ok_No:
-        st.success(f"OK Parts: {', '.join(map(str, ok_No))} (Total: {len(ok_No)})")
+        if current_language == "en":
+            st.success(
+                f"OK {text['parts']}: {', '.join(map(str, ok_No))} ({text['total']}: {len(ok_No)})"
+            )
+        elif current_language == "kr":
+            st.success(
+                f"OK {text['parts']}: {', '.join(map(str, ok_No))} ({text['total']} {len(ok_No)} 개)"
+            )
 
 
 def image_inference():
-    st.title("Real-time NG/OK Image Classification")
+    st.title(text["title"])
 
     # 이미지 파일 업로드
     uploaded_images = st.file_uploader(
-        "Choose an image files", type=["jpg", "jpeg", "png"], accept_multiple_files=True
+        text["upload"], type=["jpg", "jpeg", "png"], accept_multiple_files=True
     )
 
     if uploaded_images:
+        st.success(text["upload_success"])
         images = []
-        st.subheader("Uploaded Images")
+        st.subheader(text["uploaded_image"])
         cols = st.columns(len(uploaded_images))
 
         for idx, uploaded_image in enumerate(uploaded_images):
@@ -90,20 +113,20 @@ def image_inference():
             image = cv2.imdecode(
                 np.frombuffer(uploaded_image.read(), np.uint8), cv2.IMREAD_COLOR
             )
-            cols[idx].image(image, channels="BGR", caption=f"Uploaded Image {idx + 1}")
+            cols[idx].image(image, channels="BGR", caption=f"Image {idx + 1}")
             images.append(image)
 
         # 이미지 전처리
-        with st.spinner("Processing Images..."):
+        with st.spinner(text["processing"]):
             processed_images = [preprocess_image(img) for img in images]
         # SageMaker 추론
-        with st.spinner("Analyzing Iamges..."):
+        with st.spinner(text["processing"]):
             results = [
                 invoke_sagemaker_endpoint("diecasting-model-T7-endpoint", img)
                 for img in processed_images
             ]
         # 결과 출력
-        st.success("Inference Complete!")
+        st.success(text["success_processing"])
         display_results(images, results)
 
 

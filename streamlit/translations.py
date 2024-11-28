@@ -1,3 +1,26 @@
+import streamlit as st
+
+
+def init_language():
+    # 세션 초기화
+    if "language" not in st.session_state:
+        st.session_state["language"] = "en"  # 기본언어 영어로 설정
+
+
+def set_language():
+    # 언어 선택 라디오 버튼
+    language_selection = selected_language = st.sidebar.radio(
+        "🌐 Select Language",
+        ["🇺🇸 ENGILSH", "🇰🇷 한국어"],
+    )
+
+    # 세션 업데이트
+    if language_selection == "🇺🇸 ENGILSH":
+        st.session_state["language"] = "en"
+    else:
+        st.session_state["language"] = "kr"
+
+
 translations = {
     "en": {
         "home": {
@@ -10,11 +33,11 @@ translations = {
             "upload": "Upload a video file for analysis.",
             "upload_success": "File upload completed!",
             "processing": "Analyzing video...",
+            "summary": "Final Result Summary",
             "total": "Total",
             "parts": "Parts",
             "detailed_image": "Detailed Images",
-            "show": "Displaying",
-            "image_part": "Images for Part",
+            "select_img_box": "Select Part to View Images",
         },
         "image": {
             "title": "Realtime Image Analysis",
@@ -22,10 +45,11 @@ translations = {
             "upload_success": "File upload completed!",
             "uploaded_image": "Uploaded Image",
             "processing": "Analyzing image...",
-            "success": "Inference completed!",
+            "success_processing": "Inference completed!",
             "total": "Total",
             "parts": "Parts",
             "result": "Result",
+            "predict": "Predict Result",
             "final_ng": "Final NG Parts",
             "summary": "Final Result Summary",
             "ng_part": "NG Parts",
@@ -46,24 +70,25 @@ translations = {
         "video": {
             "title": "실시간 비디오 분석",
             "upload": "분석할 비디오 파일을 업로드하세요.",
-            "upload_success": "파일 업로드 완료!",
+            "upload_success": "파일 업로드가 완료되었습니다!",
             "processing": "비디오를 분석 중입니다...",
+            "summary": "최종 결과 요약",
             "total": "총",
             "parts": "부품",
             "detailed_image": "상세 이미지",
-            "show": "표시 중",
-            "image_part": "부품에 대한 세부 이미지",
+            "select_img_box": "이미지를 볼 부품을 선택하세요",
         },
         "image": {
             "title": "실시간 이미지 분석",
             "upload": "분석할 이미지 파일을 업로드하세요.",
-            "upload_success": "파일 업로드 완료!",
+            "upload_success": "파일 업로드가 완료되었습니다!",
             "uploaded_image": "업로드된 이미지",
             "processing": "이미지를 분석 중입니다...",
-            "success": "분석이 완료되었습니다!",
+            "success_processing": "분석이 완료되었습니다!",
             "total": "총",
             "parts": "부품",
             "result": "결과",
+            "predict": "예측 결과",
             "final_ng": "최종 NG 부품",
             "summary": "최종 결과 요약",
             "ng_part": "NG 부품",

@@ -5,6 +5,7 @@ import asyncio
 import boto3
 import time
 from concurrent.futures import ThreadPoolExecutor
+from translations import init_language, set_language, translations
 from utils import (
     get_image_hash,
     hamming_distance,
@@ -16,6 +17,12 @@ from utils import (
 )
 
 st.set_page_config(page_title="Realtime Detect Video", page_icon="📹")
+
+# 언어 초기화 및 선택
+init_language()
+set_language()
+current_language = st.session_state["language"]
+text = translations[current_language]["video"]
 
 
 # 비동기로 SageMaker 호출
@@ -160,15 +167,15 @@ def get_cached_images(detect, part_number):
 def show_result_details(detect, status):
     container = st.container()
     with container:
-        st.subheader(f"{status} Detailed Images")
+        st.subheader(f"{status} {text["detailed_image"]}")
         selected_part = st.selectbox(
-            f"Select Part to View {status} Images",
+            f"{text["select_img_box"]} : {status}",
             options=list(detect.keys()),
             key=f"select_{status}",
         )
 
     if selected_part:
-        st.write(f"Showing {status} Images for Part {selected_part}")
+        st.subheader(f"No. {selected_part}")
         images = get_cached_images(detect, selected_part)
         cols = st.columns(5)
         for idx, (image, label) in enumerate(images):
@@ -187,9 +194,9 @@ def upload_results_to_s3(ng_detect, ok_detect):
 
 # 메인 함수
 def realtime_video_inference():
-    st.title("Real-time NG/OK Detection with Video")
+    st.title(text["title"])
 
-    uploaded_file = st.file_uploader("Choose a video file", type=["mp4", "mov", "avi"])
+    uploaded_file = st.file_uploader(text["upload"], type=["mp4", "mov", "avi"])
 
     # 세션 상태 초기화
     if "upload_time" not in st.session_state:
@@ -209,12 +216,12 @@ def realtime_video_inference():
         with open(temp_video_path, "wb") as f:
             f.write(uploaded_file.getbuffer())
         st.success(
-            f"Complete Upload File : {uploaded_file.name} ({st.session_state['upload_time']})"
+            f"{text["upload_success"]} : {uploaded_file.name} ({st.session_state['upload_time']})"
         )
         st.video(temp_video_path, autoplay=True, muted=True)
 
         if not st.session_state.analysis_done:
-            with st.spinner("Anlayzing video"):
+            with st.spinner(text["processing"]):
                 (
                     ng_detect,
                     ok_detect,
@@ -224,9 +231,25 @@ def realtime_video_inference():
                 st.session_state.analysis_done = True
 
         # 결과 출력
-        st.subheader("Final Result Summary")
-        st.error(f"Total {len(ng_detect.keys())} NG Parts: {list(ng_detect.keys())}")
-        st.success(f"Total {len(ok_detect.keys())} OK Parts: {list(ok_detect.keys())}")
+        st.subheader(text["summary"])
+        if len(ng_detect.keys()) > 0:
+            if current_language == "en":
+                st.error(
+                    f"{text['total']} {len(ng_detect.keys())} NG {text['parts']}: {list(ng_detect.keys())}"
+                )
+            elif current_language == "kr":
+                st.error(
+                    f"{text['total']} {len(ng_detect.keys())}개의 NG {text['parts']}: {list(ng_detect.keys())}"
+                )
+        if len(ok_detect.keys()) > 0:
+            if current_language == "en":
+                st.success(
+                    f"{text['total']} {len(ok_detect.keys())} OK {text['parts']}: {list(ok_detect.keys())}"
+                )
+            elif current_language == "kr":
+                st.success(
+                    f"{text['total']} {len(ok_detect.keys())}개의 OK {text['parts']}: {list(ok_detect.keys())}"
+                )
 
         @st.fragment
         def show_ng_section():
