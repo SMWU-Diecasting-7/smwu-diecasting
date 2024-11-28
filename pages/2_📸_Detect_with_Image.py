@@ -35,7 +35,7 @@ def upload_image_to_s3(bucket_name, key, image):
         Bucket=bucket_name,
         Key=key,
         Body=img_encoded.tobytes(),
-        ContentType="image/jpeg",
+        ContentType="image/jpg",
     )
     return f"https://{bucket_name}.s3.{os.getenv('AWS_REGION')}.amazonaws.com/{key}"
 
@@ -114,6 +114,7 @@ def display_results_and_save(images, results, video_name):
     # 최종 결과 JSON 저장
     json_key = f"results/{video_name}/results.json"
     upload_results_to_s3(bucket_name, json_key, data)
+    upload_image_to_s3(bucket_name, key, data)
 
     # 최종 결과 표시
     st.subheader("Final Result Summary")
@@ -121,6 +122,8 @@ def display_results_and_save(images, results, video_name):
         st.error(f"NG Parts: {', '.join(map(str, ng_parts))} (Total: {len(ng_parts)})")
     if ok_parts:
         st.success(f"OK Parts: {', '.join(map(str, ok_parts))} (Total: {len(ok_parts)})")
+
+
 
 # 이미지 추론 메인 함수
 def image_inference():

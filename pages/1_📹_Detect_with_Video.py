@@ -16,6 +16,7 @@ from utils import (
 )
 import json
 import boto3
+from botocore.exceptions import NoCredentialsError
 
 st.set_page_config(page_title="Realtime Detect Video", page_icon="📹")
 
@@ -52,6 +53,8 @@ async def realtime_process_video_async(video_path, tolerance=5, frame_interval=2
 
     # 실시간 이미지 출력용 컨테이너
     realtime_container = st.empty()
+
+   
 
     async def process_frame(frame, frame_idx):
         """단일 프레임 처리"""
@@ -94,6 +97,9 @@ async def realtime_process_video_async(video_path, tolerance=5, frame_interval=2
                         channels="BGR",
                         caption=f"Channel {idx + 1}: {lbl}",
                     )
+            
+            
+
 
             # 부품 상태 확인 (5개의 이미지가 모두 채워지면)
             if len(current_part_images) == 5:
@@ -112,6 +118,8 @@ async def realtime_process_video_async(video_path, tolerance=5, frame_interval=2
                     ok_detect[part_number] = [
                         img for _, img, lbl in current_part_images
                     ]
+               
+                
 
                 # 부품 상태 출력
                 with realtime_container.container():
@@ -123,6 +131,7 @@ async def realtime_process_video_async(video_path, tolerance=5, frame_interval=2
                             channels="BGR",
                             caption=f"Channel {idx + 1}: {lbl}",
                         )
+                    
 
                 # 초기화
                 current_part_images = []
@@ -159,6 +168,7 @@ def get_cached_images(detect, part_number):
     return detect[part_number]
 
 
+
 def show_result_details(detect, status):
     container = st.container()
     with container:
@@ -174,7 +184,13 @@ def show_result_details(detect, status):
         images = get_cached_images(detect, selected_part)
         cols = st.columns(5)
         for idx, image in enumerate(images):
+            #
+            image_url = image['https://cv-7-video.s3.us-east-1.amazonaws.com/results/']
+            #
             cols[idx % 5].image(
+                #
+                image_url,
+                #
                 image,
                 channels="BGR",
                 caption=f"Part {selected_part} - Channel {idx + 1}",
@@ -207,7 +223,7 @@ def upload_image_to_s3(bucket_name, key, image):
         Bucket=bucket_name,
         Key=key,
         Body=img_encoded.tobytes(),
-        ContentType="image/jpeg",
+        ContentType="image/jpg",
     )
     return f"s3://{bucket_name}/{key}"
 
@@ -291,7 +307,14 @@ def realtime_video_inference():
                     "ok_parts": list(ok_detect.keys()),
                 }
                 result_key = f"{results_prefix}{uploaded_file.name}.json"
-                upload_results_to_s3(bucket_name, result_key, result_data)
+                save_results_with_images_to_s3(
+    bucket_name,
+    result_data["video_name"],
+    [ng_detect[part_number] for part_number in result_data["ng_parts"]],  # NG 이미지 데이터
+    [ok_detect[part_number] for part_number in result_data["ok_parts"]],  # OK 이미지 데이터
+)
+
+                #save_results_with_images_to_s3(bucket_name, result_data["video_name"],result_data["ng_parts"],result_data["ok_parts"])
                 st.success(f"Results saved to S3: {result_key}")
 
         # 결과 출력
