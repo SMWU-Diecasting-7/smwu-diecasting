@@ -38,6 +38,7 @@ translations = {
             "parts": "Parts",
             "detailed_image": "Detailed Images",
             "select_img_box": "Select Part to View Images",
+            "accuracy": "Accuracy",
         },
         "image": {
             "title": "Realtime Image Analysis",
@@ -77,6 +78,7 @@ translations = {
             "parts": "부품",
             "detailed_image": "상세 이미지",
             "select_img_box": "이미지를 볼 부품을 선택하세요",
+            "accuracy": "정확도",
         },
         "image": {
             "title": "실시간 이미지 분석",
