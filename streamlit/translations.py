@@ -1,3 +1,26 @@
+import streamlit as st
+
+
+def init_language():
+    # 세션 초기화
+    if "language" not in st.session_state:
+        st.session_state["language"] = "en"  # 기본언어 영어로 설정
+
+
+def set_language():
+    # 언어 선택 라디오 버튼
+    language_selection = selected_language = st.sidebar.radio(
+        "🌐 Select Language",
+        ["🇺🇸 ENGILSH", "🇰🇷 한국어"],
+    )
+
+    # 세션 업데이트
+    if language_selection == "🇺🇸 ENGILSH":
+        st.session_state["language"] = "en"
+    else:
+        st.session_state["language"] = "kr"
+
+
 translations = {
     "en": {
         "home": {
