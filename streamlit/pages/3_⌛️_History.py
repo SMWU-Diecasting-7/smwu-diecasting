@@ -45,34 +45,81 @@ def fetch_image_from_s3(bucket_name, image_key):
     response = s3.get_object(Bucket=bucket_name, Key=image_key)
     return Image.open(BytesIO(response["Body"].read()))
 
-# 중복 제거 로직
-def remove_duplicate_parts(data):
-    def deduplicate(parts):
-        seen = set()
-        unique_parts = []
-        for part in parts:
-            # Serialize the part as a tuple for deduplication
-            part_serialized = tuple(tuple(d.items()) for d in part)
-            if part_serialized not in seen:
-                seen.add(part_serialized)
+def deduplicate_parts(parts):
+    unique_parts = []
+    seen_part_numbers = set()
+
+    for part in parts:
+        # part가 리스트인지 확인 (유효성 검사)
+        if isinstance(part, list) and len(part) > 0 and isinstance(part[0], dict):
+            part_number = part[0]["part_number"]
+            if part_number not in seen_part_numbers:
                 unique_parts.append(part)
-        return unique_parts
+                seen_part_numbers.add(part_number)
+        else:
+            st.warning(f"잘못된 데이터 형식: {part}")
+    
+    return unique_parts
 
-    # Apply deduplication to NG and OK parts
-    data["ng_parts"] = deduplicate(data.get("ng_parts", []))
-    data["ok_parts"] = deduplicate(data.get("ok_parts", []))
-    return data
 
-# Streamlit UI
+# NG Part 렌더링
+@st.fragment
+def render_ng_parts(result_data, bucket_name):
+    ng_part_numbers = [part[0]["part_number"] for part in result_data["ng_parts"]]
+    selected_ng_part = st.selectbox(
+        "Choose an NG part:",
+        ["Select data"] + sorted(ng_part_numbers),
+        key="selected_ng_part",
+    )
+
+    if selected_ng_part != "Select data":
+        st.subheader(f"NG Part {selected_ng_part}")
+        for part in result_data["ng_parts"]:
+            if part[0]["part_number"] == selected_ng_part:
+                cols = st.columns(5)  # 5개씩 출력
+                for idx, img_info in enumerate(part):
+                    image_url = img_info["image_url"]
+                    image_key = image_url.replace(f"s3://{bucket_name}/", "")
+                    img = fetch_image_from_s3(bucket_name, image_key)
+                    cols[idx % 5].image(
+                        img, caption=f"Part {selected_ng_part} - Image {idx + 1}"
+                    )
+
+
+# OK Part 렌더링
+@st.fragment
+def render_ok_parts(result_data, bucket_name):
+    ok_part_numbers = [part[0]["part_number"] for part in result_data["ok_parts"]]
+    selected_ok_part = st.selectbox(
+        "Choose an OK part:",
+        ["Select data"] + sorted(ok_part_numbers),
+        key="selected_ok_part",
+    )
+
+    if selected_ok_part != "Select data":
+        st.subheader(f"OK Part {selected_ok_part}")
+        for part in result_data["ok_parts"]:
+            if part[0]["part_number"] == selected_ok_part:
+                cols = st.columns(5)  # 5개씩 출력
+                for idx, img_info in enumerate(part):
+                    image_url = img_info["image_url"]
+                    image_key = image_url.replace(f"s3://{bucket_name}/", "")
+                    img = fetch_image_from_s3(bucket_name, image_key)
+                    cols[idx % 5].image(
+                        img, caption=f"Part {selected_ok_part} - Image {idx + 1}"
+                    )
+
+
+# Streamlit 메인 UI
 def view_results_from_s3():
-    st.title("S3에서 결과 보기")
+    st.title("View Results from S3")
 
     # S3 버킷과 경로
     bucket_name = "cv-7-video"
     results_prefix = "results/"
 
     # JSON 파일 선택
-    st.subheader("결과 JSON 파일 선택")
+    st.subheader("Select a JSON file")
     s3 = get_s3_client()
     response = s3.list_objects_v2(Bucket=bucket_name, Prefix=results_prefix)
     json_files = [
@@ -80,46 +127,31 @@ def view_results_from_s3():
     ]
 
     if not json_files:
-        st.warning("결과 JSON 파일이 없습니다.")
+        st.warning("No JSON files found.")
         return
 
-    selected_json = st.selectbox("결과 JSON 파일을 선택하세요:", json_files)
+    selected_json = st.selectbox(
+        "Choose a JSON file:", ["Select a JSON file"] + json_files, key="selected_json"
+    )
 
-    # 데이터 로드
-    if st.button("결과 가져오기"):
-        try:
-            # JSON 데이터 로드
-            result_data = fetch_json_from_s3(bucket_name, selected_json)
-            # 중복 제거
-            result_data = remove_duplicate_parts(result_data)
-            st.success(f"결과를 성공적으로 로드했습니다: {result_data['video_name']}")
+    if selected_json == "Select a JSON file":
+        st.info("Please select a JSON file to view results.")
+        return
 
-            # NG 파트 표시
-            st.header("NG Parts")
-            for part in result_data["ng_parts"]:
-                part_number = part[0]["part_number"]
-                st.subheader(f"NG Part {part_number}")
-                cols = st.columns(5)  # 5개씩 출력
-                for idx, img_info in enumerate(part):
-                    image_url = img_info["image_url"]
-                    image_key = image_url.replace(f"s3://{bucket_name}/", "")
-                    img = fetch_image_from_s3(bucket_name, image_key)
-                    cols[idx % 5].image(img, caption=f"Part {part_number} - Image {idx + 1}")
+    # JSON 데이터 로드 및 중복 제거
+    @st.cache_data
+    def load_json_data(bucket_name, json_key):
+        result_data = fetch_json_from_s3(bucket_name, json_key)
+        result_data["ng_parts"] = deduplicate_parts(result_data["ng_parts"])
+        result_data["ok_parts"] = deduplicate_parts(result_data["ok_parts"])
+        return result_data
 
-            # OK 파트 표시
-            st.header("OK Parts")
-            for part in result_data["ok_parts"]:
-                part_number = part[0]["part_number"]
-                st.subheader(f"OK Part {part_number}")
-                cols = st.columns(5)  # 5개씩 출력
-                for idx, img_info in enumerate(part):
-                    image_url = img_info["image_url"]
-                    image_key = image_url.replace(f"s3://{bucket_name}/", "")
-                    img = fetch_image_from_s3(bucket_name, image_key)
-                    cols[idx % 5].image(img, caption=f"Part {part_number} - Image {idx + 1}")
+    result_data = load_json_data(bucket_name, selected_json)
+    st.success(f"Successfully loaded results: {result_data['video_name']}")
 
-        except Exception as e:
-            st.error(f"결과를 가져오는 중 오류가 발생했습니다: {e}")
+    # NG 및 OK Part 독립적 렌더링
+    render_ng_parts(result_data, bucket_name)
+    render_ok_parts(result_data, bucket_name)
 
 
 if __name__ == "__main__":
@@ -131,7 +163,7 @@ set_language()
 current_language = st.session_state["language"]
 text = translations[current_language]["history"]
 
-# history 페이지 내용
-st.title(text["title"])
-st.subheader(text["description"])
-st.write(text["select_history"])
+# # history 페이지 내용
+# st.title(text["title"])
+# st.subheader(text["description"])
+# st.write(text["select_history"])
