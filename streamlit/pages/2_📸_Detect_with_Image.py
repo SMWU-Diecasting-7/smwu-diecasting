@@ -60,7 +60,7 @@ text = translations[current_language]["image"]
 def preprocess_image(image):
     processed_image = resize_and_pad_image(
         crop_image(
-            apply_color_jitter(image, brightness=1.3, contrast=1.15), crop_ratio=1.0
+            apply_color_jitter(image, brightness=1.0, contrast=1.0), crop_ratio=1.0
         )
     )
     return processed_image
