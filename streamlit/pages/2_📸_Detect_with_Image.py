@@ -3,10 +3,11 @@ import streamlit as st
 import numpy as np
 import os
 import json
-import boto3
-import time  # time 모듈 추가
+import time
 from dotenv import load_dotenv
 import os
+from aiobotocore.session import get_session
+import asyncio
 from PIL import Image
 
 from translations import init_language, set_language, translations
@@ -33,38 +34,40 @@ current_language = st.session_state["language"]
 text = translations[current_language]["image"]
 
 
-# S3 클라이언트 생성
-def get_s3_client():
-    return boto3.client(
+# S3에 이미지 업로드 (비동기)
+async def upload_image_to_s3_async(bucket_name, key, image):
+    _, img_encoded = cv2.imencode(".jpg", image)
+    session = get_session()
+    async with session.create_client(
         "s3",
         aws_access_key_id=os.getenv("AWS_ACCESS_KEY_ID"),
         aws_secret_access_key=os.getenv("AWS_SECRET_ACCESS_KEY"),
         region_name=os.getenv("AWS_REGION"),
-    )
-
-
-# S3에 이미지 업로드
-def upload_image_to_s3(bucket_name, key, image):
-    _, img_encoded = cv2.imencode(".jpg", image)
-    s3 = get_s3_client()
-    s3.put_object(
-        Bucket=bucket_name,
-        Key=key,
-        Body=img_encoded.tobytes(),
-        ContentType="image/jpeg",
-    )
+    ) as s3:
+        await s3.put_object(
+            Bucket=bucket_name,
+            Key=key,
+            Body=img_encoded.tobytes(),
+            ContentType="image/jpeg",
+        )
     return f"https://{bucket_name}.s3.{os.getenv('AWS_REGION')}.amazonaws.com/{key}"
 
 
-# JSON 데이터 S3에 저장
-def upload_results_to_s3(bucket_name, key, data):
-    s3 = get_s3_client()
-    s3.put_object(
-        Bucket=bucket_name,
-        Key=key,
-        Body=json.dumps(data),
-        ContentType="application/json",
-    )
+# 총 최종 결과 JSON 형식으로 S3에 저장
+async def upload_results_to_s3_async(bucket_name, key, data):
+    session = get_session()
+    async with session.create_client(
+        "s3",
+        aws_access_key_id=os.getenv("AWS_ACCESS_KEY_ID"),
+        aws_secret_access_key=os.getenv("AWS_SECRET_ACCESS_KEY"),
+        region_name=os.getenv("AWS_REGION"),
+    ) as s3:
+        await s3.put_object(
+            Bucket=bucket_name,
+            Key=key,
+            Body=json.dumps(data),
+            ContentType="application/json",
+        )
 
 
 # 이미지 전처리 함수
@@ -106,18 +109,6 @@ def display_results_and_save(images, results, final_result_name):
             bordered_image, channels="BGR", caption=f"Part. {i + 1}: {label}"
         )
 
-    # NG 이미지 S3 업로드
-    for idx, img in enumerate(ng_images):
-        key = f"results/image/{final_result_name}/NG_part_{idx + 1}.jpg"
-        image_url = upload_image_to_s3(bucket_name, key, img)
-        data["ng_parts"].append({"part_number": idx + 1, "image_url": image_url})
-
-    # OK 이미지 S3 업로드
-    for idx, img in enumerate(ok_No):
-        key = f"results/image/{final_result_name}/OK_part_{idx + 1}.jpg"
-        image_url = upload_image_to_s3(bucket_name, key, img)
-        data["ok_parts"].append({"part_number": idx + 1, "image_url": image_url})
-
     # NG 이미지 추가 출력
     if ng_images:
         st.subheader(text["final_ng"])
@@ -127,10 +118,6 @@ def display_results_and_save(images, results, final_result_name):
             cols[idx % 5].image(
                 bordered_ng_image, channels="BGR", caption=f"No. {ng_no}"
             )
-
-    # 최종 결과 JSON S3에 업로드
-    json_key = f"results/image/{final_result_name}/results.json"
-    upload_results_to_s3(bucket_name, json_key, data)
 
     # 최종 결과 표시
     st.subheader(text["summary"])
@@ -153,6 +140,32 @@ def display_results_and_save(images, results, final_result_name):
             st.success(
                 f"OK {text['parts']}: {', '.join(map(str, ok_No))} ({text['total']} {len(ok_No)} 개)"
             )
+
+    # 비동기 s3 업로드 작업
+    async def perform_s3_uploads():
+        upload_tasks = []
+
+        for idx, img in enumerate(ng_images):
+            key = f"results/image/{final_result_name}/NG_part_{idx + 1}.jpg"
+            upload_tasks.append(upload_image_to_s3_async(bucket_name, key, img))
+
+        for idx, img in enumerate(ok_No):
+            key = f"results/image/{final_result_name}/OK_part_{idx + 1}.jpg"
+            upload_tasks.append(upload_image_to_s3_async(bucket_name, key, img))
+
+        # JSON 데이터 업로드 작업 추가
+        json_key = f"results/image/{final_result_name}/results.json"
+        upload_tasks.append(upload_results_to_s3_async(bucket_name, json_key, data))
+
+        # 모든 작업 비동기 실행
+        await asyncio.gather(*upload_tasks)
+
+    st.write("")
+    st.write("Upload to S3")
+    # 비동기 작업 실행
+    with st.spinner("Upload to S3..."):
+        asyncio.run(perform_s3_uploads())
+        st.success("Complete Upload to S3!")
 
 
 def image_inference():
