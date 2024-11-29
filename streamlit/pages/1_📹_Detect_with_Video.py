@@ -4,6 +4,7 @@ import streamlit as st
 import asyncio
 import unicodedata
 import time
+from io import BytesIO
 from concurrent.futures import ThreadPoolExecutor
 from translations import init_language, set_language, translations
 from utils import (
@@ -15,6 +16,9 @@ from utils import (
     add_border,
     invoke_sagemaker_endpoint,
 )
+import json
+import boto3
+import numpy as np  
 
 st.set_page_config(page_title="Realtime Detect Video", page_icon="📹")
 
@@ -74,7 +78,7 @@ async def realtime_process_video_async(video_path, tolerance=5, frame_interval=2
             processed_img = resize_and_pad_image(
                 crop_image(apply_color_jitter(frame, brightness=1.0, contrast=1.0), 1.0)
             )
-
+            
             # 비동기로 SageMaker 호출
             frame_idx, result = await async_invoke_sagemaker(
                 frame_idx, processed_img, loop, executor
@@ -83,9 +87,11 @@ async def realtime_process_video_async(video_path, tolerance=5, frame_interval=2
             label = "OK" if result == 1 else "NG"
             label_color = (0, 255, 0) if result == 1 else (0, 0, 255)
             bordered_frame = add_border(frame, label_color)
+            
 
             # 응답 저장
             current_part_images.append((frame_idx, bordered_frame, label))
+           
             # 프레임 번호 기준으로 정렬
             current_part_images.sort(key=lambda x: x[0])
 
@@ -99,6 +105,7 @@ async def realtime_process_video_async(video_path, tolerance=5, frame_interval=2
                         channels="BGR",
                         caption=f"Channel {idx + 1}: {lbl}",
                     )
+                
 
             # 부품 상태 확인 (5개의 이미지가 모두 채워지면)
             if len(current_part_images) == 5:
@@ -107,7 +114,7 @@ async def realtime_process_video_async(video_path, tolerance=5, frame_interval=2
                     if "NG" not in [lbl for _, _, lbl in current_part_images]
                     else "NG"
                 )
-
+               #st.markdown(current_part_images)  #확인용
                 # 최종 이미지 저장
                 if part_status == "NG":
                     ng_detect[part_number] = [
@@ -171,12 +178,13 @@ def show_result_details(detect, status):
         selected_part = st.selectbox(
             f"{text["select_img_box"]} : {status}",
             options=list(detect.keys()),
-            key=f"select_{status}",
+            key=f"select_{status}"
         )
 
     if selected_part:
         st.subheader(f"No. {selected_part}")
         images = get_cached_images(detect, selected_part)
+       
         cols = st.columns(5)
         for idx, (image, label) in enumerate(images):
             cols[idx % 5].image(
@@ -184,7 +192,103 @@ def show_result_details(detect, status):
                 channels="BGR",
                 caption=f"Part {selected_part} - Channel {idx + 1}: {label}",
             )
+        
 
+# S3 클라이언트 생성
+def get_s3_client():
+    return boto3.client(
+        "s3",
+        aws_access_key_id=os.getenv("AWS_ACCESS_KEY_ID"),
+        aws_secret_access_key=os.getenv("AWS_SECRET_ACCESS_KEY"),
+        region_name=os.getenv("AWS_REGION"),
+    )
+
+# S3에 결과 저장
+def upload_results_to_s3(bucket_name, key, data):
+    s3 = get_s3_client()
+    s3.put_object(
+        Bucket=bucket_name,
+        Key=key,
+        Body=json.dumps(data),
+        ContentType="application/json",
+    )
+
+# S3에 이미지 업로드
+def upload_image_to_s3(bucket_name, key, image_data):
+    #for i in range(len(image_data)):
+    image_data_array = np.array(image_data)
+    if len(image_data_array.shape) == 3 and image_data_array.shape[2] == 3:
+ #       image_data_array = cv2.cvtColor(image_data_array, cv2.COLOR_BGR2RGB)
+        ret, encoded_img = cv2.imencode('.jpg', image_data_array) 
+        #st.markdown(encoded_img) #확인용
+        if not ret:
+            raise ValueError("Failed to encode image")
+    
+    
+        with BytesIO() as img_byte_array:
+            img_byte_array.write(encoded_img.tobytes())
+            img_byte_array.seek(0)
+        
+       
+        #img_encoded = cv`2`.imread(image, 1)
+            s3 = get_s3_client()
+            s3.put_object(
+                Bucket=bucket_name,
+                Key=key,
+                Body=img_byte_array,
+                ContentType="image/jpeg",
+            )
+    return f"s3://{bucket_name}/{key}"
+
+# S3에서 JSON 데이터 불러오기
+def fetch_results_from_s3(bucket_name, prefix):
+    s3 = get_s3_client()
+    response = s3.list_objects_v2(Bucket=bucket_name, Prefix=prefix)
+
+    results = []
+    if "Contents" in response:
+        for obj in response["Contents"]:
+            key = obj["Key"]
+            if key.endswith(".json"):
+                json_data = s3.get_object(Bucket=bucket_name, Key=key)["Body"].read()
+                results.append(json.loads(json_data))
+    return results
+
+# 결과를 라벨별로 저장
+def save_results_with_images_to_s3(
+    bucket_name, video_name, ng_images, ok_images
+):
+    result_data = {"video_name": video_name, "ng_parts": [], "ok_parts": []}
+
+    for idx in ng_images.keys():
+        result_data_in = []
+        #st.markdown(ng_images) #확인용
+        for i in range(len(ng_images[idx])):
+            key = f"results/{video_name}/NG_part_{idx}/{i+1}.jpg"
+            #st.markdown(idx)   #확인용
+            #st.markdown(ng_images[idx+1][i][0][0]) #확인용
+            
+            image_url = upload_image_to_s3(bucket_name, key, ng_images[idx][i][0])
+            result_data_in.append({"part_number": idx, "image_url": image_url})
+            result_data["ng_parts"].append(result_data_in)
+        #st.markdown(image_url) #확인용
+        
+
+    for idx in ok_images.keys():
+        result_data_in = []
+        #st.markdown(ng_images) #확인용
+        #st.markdown(idx)
+        for i in range(len(ok_images[idx])):
+            key = f"results/{video_name}/OK_part_{idx}/{i+1}.jpg"
+            #st.markdown(ng_images[idx+1][i][0][0]) #확인용
+            image_url = upload_image_to_s3(bucket_name, key, ok_images[idx][i][0])
+            result_data_in.append({"part_number": idx, "image_url": image_url})
+            result_data["ok_parts"].append(result_data_in)
+    
+
+    # JSON 데이터 저장
+    json_key = f"results/{video_name}/results.json"
+    upload_results_to_s3(bucket_name, json_key, result_data)
 
 def print_accuracy(ng_detect, ok_detect, text):
     # 부품별 상태를 비교하여 정확도 계산(다이케스팅.mp4용)
@@ -258,7 +362,11 @@ def print_accuracy(ng_detect, ok_detect, text):
 def realtime_video_inference():
     st.title(text["title"])
 
-    uploaded_file = st.file_uploader(text["upload"], type=["mp4", "mov", "avi"])
+    # S3 버킷 정보
+    bucket_name = "cv-7-video"
+    results_prefix = "results/"
+
+    uploaded_file = st.file_uploader("Choose a video file", type=["mp4", "mov", "avi"])
 
     # 세션 상태 초기화
     if "upload_time" not in st.session_state:
@@ -287,6 +395,7 @@ def realtime_video_inference():
         st.video(temp_video_path, autoplay=True, muted=True)
 
         if not st.session_state.analysis_done:
+
             with st.spinner(text["processing"]):
                 (
                     ng_detect,
@@ -295,6 +404,25 @@ def realtime_video_inference():
                     realtime_process_video_async(temp_video_path, tolerance=5)
                 )
                 st.session_state.analysis_done = True
+
+                # 결과를 S3에 저장
+                result_data = {
+                    "video_name": uploaded_file.name,
+                    "ng_parts": list(ng_detect.keys()),
+                    "ok_parts": list(ok_detect.keys()),
+                }
+                result_key = f"{results_prefix}{uploaded_file.name}.json"
+                ##upload_results_to_s3(bucket_name, result_key, result_data)
+                #for i in range(len(ng_detect.keys())):
+                #    save_results_with_images_to_s3(
+                #    bucket_name, uploaded_file.name, ng_detect[i+1], ok_detect[i+1]
+                #)
+                #st.success(ng_detect) #확인용
+                save_results_with_images_to_s3(
+                    bucket_name, uploaded_file.name, ng_detect, ok_detect
+                )
+                
+                st.success(f"Results saved to S3: {result_key}")
 
         # 결과 출력
         # 해당 비디오에만 정확도 출력
