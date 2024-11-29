@@ -270,7 +270,7 @@ def save_results_with_images_to_s3(
         for i in range(len(ng_images[idx+1])):
             key = f"results/{video_name}/NG_part_{idx + 1}/{i+1}.jpg"
             #st.markdown(idx)   #확인용
-            st.markdown(ng_images[idx+1][i][0][0]) #확인용
+            #st.markdown(ng_images[idx+1][i][0][0]) #확인용
             
             image_url = upload_image_to_s3(bucket_name, key, ng_images[idx+1][i][0])
             result_data_in.append({"part_number": idx + 1, "image_url": image_url})
@@ -283,7 +283,7 @@ def save_results_with_images_to_s3(
         #st.markdown(ng_images) #확인용
         for i in range(len(ok_images[idx+1])-2):
             key = f"results/{video_name}/OK_part_{idx + 1}/{i+1}.jpg"
-            st.markdown(ng_images[idx+1][i][0][0]) #확인용
+            #st.markdown(ng_images[idx+1][i][0][0]) #확인용
             image_url = upload_image_to_s3(bucket_name, key, ok_images[idx+1][i][0])
             result_data_in.append({"part_number": idx + 1, "image_url": image_url})
             result_data["ok_parts"].append(result_data_in)
