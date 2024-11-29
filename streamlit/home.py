@@ -16,3 +16,4 @@ text = translations[current_language]["home"]
 st.title(text["title"])
 st.subheader(text["subtitle"])
 st.write(text["description"])
+st.write("")
