@@ -4,6 +4,8 @@ import streamlit as st
 import asyncio
 import numpy as np
 import time
+from PIL import Image
+from io import BytesIO
 from concurrent.futures import ThreadPoolExecutor
 from utils import (
     get_image_hash,
@@ -69,7 +71,7 @@ async def realtime_process_video_async(video_path, tolerance=5, frame_interval=2
             processed_img = resize_and_pad_image(
                 crop_image(apply_color_jitter(frame, brightness=1.0, contrast=1.0), 1.0)
             )
-
+            
             # 비동기로 SageMaker 호출
             frame_idx, result = await async_invoke_sagemaker(
                 frame_idx, processed_img, loop, executor
@@ -78,9 +80,11 @@ async def realtime_process_video_async(video_path, tolerance=5, frame_interval=2
             label = "OK" if result == 1 else "NG"
             label_color = (0, 255, 0) if result == 1 else (0, 0, 255)
             bordered_frame = add_border(frame, label_color)
+            
 
             # 응답 저장
             current_part_images.append((frame_idx, bordered_frame, label))
+           
             # 프레임 번호 기준으로 정렬
             current_part_images.sort(key=lambda x: x[0])
 
@@ -94,6 +98,7 @@ async def realtime_process_video_async(video_path, tolerance=5, frame_interval=2
                         channels="BGR",
                         caption=f"Channel {idx + 1}: {lbl}",
                     )
+                
 
             # 부품 상태 확인 (5개의 이미지가 모두 채워지면)
             if len(current_part_images) == 5:
@@ -102,7 +107,7 @@ async def realtime_process_video_async(video_path, tolerance=5, frame_interval=2
                     if "NG" not in [lbl for _, _, lbl in current_part_images]
                     else "NG"
                 )
-
+               #st.markdown(current_part_images)  #확인용
                 # 최종 이미지 저장
                 if part_status == "NG":
                     ng_detect[part_number] = [
@@ -166,19 +171,21 @@ def show_result_details(detect, status):
         selected_part = st.selectbox(
             f"Select Part to View {status} Images",
             options=list(detect.keys()),
-            key=f"select_{status}",
+            key=f"select_{status}"
         )
 
     if selected_part:
         st.write(f"Showing {status} Images for Part {selected_part}")
         images = get_cached_images(detect, selected_part)
+       
         cols = st.columns(5)
         for idx, image in enumerate(images):
             cols[idx % 5].image(
                 image,
                 channels="BGR",
-                caption=f"Part {selected_part} - Channel {idx + 1}",
+                caption=f"Part {selected_part} - Channel {idx + 1}"
             )
+        
 
 # S3 클라이언트 생성
 def get_s3_client():
@@ -200,15 +207,33 @@ def upload_results_to_s3(bucket_name, key, data):
     )
 
 # S3에 이미지 업로드
-def upload_image_to_s3(bucket_name, key, image):
-    _, img_encoded = cv2.imencode(".jpg", image)
-    s3 = get_s3_client()
-    s3.put_object(
-        Bucket=bucket_name,
-        Key=key,
-        Body=img_encoded.tobytes(),
-        ContentType="image/jpeg",
-    )
+def upload_image_to_s3(bucket_name, key, image_data):
+    #for i in range(len(image_data)):
+    image_data_array = np.array(image_data)
+    if len(image_data_array.shape) == 3 and image_data_array.shape[2] == 3:
+ #       image_data_array = cv2.cvtColor(image_data_array, cv2.COLOR_BGR2RGB)
+        ret, encoded_img = cv2.imencode('.jpg', image_data_array) 
+        st.markdown(encoded_img) #확인용
+        if not ret:
+            raise ValueError("Failed to encode image")
+    
+   
+    
+    
+    
+        with BytesIO() as img_byte_array:
+            img_byte_array.write(encoded_img.tobytes())
+            img_byte_array.seek(0)
+        
+       
+        #img_encoded = cv`2`.imread(image, 1)
+            s3 = get_s3_client()
+            s3.put_object(
+                Bucket=bucket_name,
+                Key=key,
+                Body=img_byte_array,
+                ContentType="image/jpeg",
+            )
     return f"s3://{bucket_name}/{key}"
 
 # S3에서 JSON 데이터 불러오기
@@ -231,15 +256,26 @@ def save_results_with_images_to_s3(
 ):
     result_data = {"video_name": video_name, "ng_parts": [], "ok_parts": []}
 
-    for idx, image in enumerate(ng_images):
-        key = f"results/{video_name}/NG_part_{idx + 1}.jpg"
-        image_url = upload_image_to_s3(bucket_name, key, image)
-        result_data["ng_parts"].append({"part_number": idx + 1, "image_url": image_url})
+    for idx in range(len(ng_images)):
+        result_data_in = []
+        #st.markdown(ng_images) #확인용
+        for i in range(len(ng_images[idx+1])):
+            key = f"results/{video_name}/NG_part_{idx + 1}/{i+1}.jpg"
+            image_url = upload_image_to_s3(bucket_name, key, ng_images[idx+1])
+            result_data_in.append({"part_number": idx + 1, "image_url": image_url})
+        result_data["ng_parts"].append(result_data_in)
+        #st.markdown(idx)   #확인용
+        #st.markdown(image_url) #확인용
 
-    for idx, image in enumerate(ok_images):
-        key = f"results/{video_name}/OK_part_{idx + 1}.jpg"
-        image_url = upload_image_to_s3(bucket_name, key, image)
-        result_data["ok_parts"].append({"part_number": idx + 1, "image_url": image_url})
+    for idx in range(len(ok_images)):
+        result_data_in = []
+        #st.markdown(ng_images) #확인용
+        for i in range(len(ok_images[idx+1])):
+            key = f"results/{video_name}/OK_part_{idx + 1}/{i+1}.jpg"
+            image_url = upload_image_to_s3(bucket_name, key, ok_images[idx+1])
+            result_data_in.append({"part_number": idx + 1, "image_url": image_url})
+        result_data["ok_parts"].append(result_data_in)
+    
 
     # JSON 데이터 저장
     json_key = f"results/{video_name}/results.json"
@@ -291,7 +327,15 @@ def realtime_video_inference():
                     "ok_parts": list(ok_detect.keys()),
                 }
                 result_key = f"{results_prefix}{uploaded_file.name}.json"
-                upload_results_to_s3(bucket_name, result_key, result_data)
+                ##upload_results_to_s3(bucket_name, result_key, result_data)
+                #for i in range(len(ng_detect.keys())):
+                #    save_results_with_images_to_s3(
+                #    bucket_name, uploaded_file.name, ng_detect[i+1], ok_detect[i+1]
+                #)
+                save_results_with_images_to_s3(
+                    bucket_name, uploaded_file.name, ng_detect, ok_detect
+                )
+                #st.success(ng_detect) #확인용
                 st.success(f"Results saved to S3: {result_key}")
 
         # 결과 출력
