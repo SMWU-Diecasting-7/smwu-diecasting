@@ -2,11 +2,12 @@ import os
 import cv2
 import streamlit as st
 import asyncio
-import numpy as np
+import unicodedata
 import time
 from PIL import Image
 from io import BytesIO
 from concurrent.futures import ThreadPoolExecutor
+from translations import init_language, set_language, translations
 from utils import (
     get_image_hash,
     hamming_distance,
@@ -20,6 +21,12 @@ import json
 import boto3
 
 st.set_page_config(page_title="Realtime Detect Video", page_icon="📹")
+
+# 언어 초기화 및 선택
+init_language()
+set_language()
+current_language = st.session_state["language"]
+text = translations[current_language]["video"]
 
 
 # 비동기로 SageMaker 호출
@@ -111,11 +118,11 @@ async def realtime_process_video_async(video_path, tolerance=5, frame_interval=2
                 # 최종 이미지 저장
                 if part_status == "NG":
                     ng_detect[part_number] = [
-                        img for _, img, lbl in current_part_images
+                        (img, lbl) for _, img, lbl in current_part_images
                     ]
                 else:
                     ok_detect[part_number] = [
-                        img for _, img, lbl in current_part_images
+                        (img, lbl) for _, img, lbl in current_part_images
                     ]
 
                 # 부품 상태 출력
@@ -167,23 +174,23 @@ def get_cached_images(detect, part_number):
 def show_result_details(detect, status):
     container = st.container()
     with container:
-        st.subheader(f"{status} Detailed Images")
+        st.subheader(f"{status} {text["detailed_image"]}")
         selected_part = st.selectbox(
-            f"Select Part to View {status} Images",
+            f"{text["select_img_box"]} : {status}",
             options=list(detect.keys()),
             key=f"select_{status}"
         )
 
     if selected_part:
-        st.write(f"Showing {status} Images for Part {selected_part}")
+        st.subheader(f"No. {selected_part}")
         images = get_cached_images(detect, selected_part)
        
         cols = st.columns(5)
-        for idx, image in enumerate(images):
+        for idx, (image, label) in enumerate(images):
             cols[idx % 5].image(
                 image,
                 channels="BGR",
-                caption=f"Part {selected_part} - Channel {idx + 1}"
+                caption=f"Part {selected_part} - Channel {idx + 1}: {label}",
             )
         
 
@@ -281,9 +288,77 @@ def save_results_with_images_to_s3(
     json_key = f"results/{video_name}/results.json"
     upload_results_to_s3(bucket_name, json_key, result_data)
 
+def print_accuracy(ng_detect, ok_detect, text):
+    # 부품별 상태를 비교하여 정확도 계산(다이케스팅.mp4용)
+    true_classes = [
+        1,
+        0,
+        1,
+        1,
+        0,
+        1,
+        0,
+        0,
+        1,
+        1,
+        1,
+        0,
+        1,
+        0,
+        0,
+        1,
+        0,
+        1,
+        1,
+        1,
+        1,
+        0,
+        0,
+        0,
+        0,
+        0,
+        1,
+        0,
+        1,
+        1,
+        0,
+        1,
+        0,
+        0,
+        0,
+        1,
+        0,
+        1,
+        1,
+        0,
+    ]
+    predicted_labels = []  # 0(NG) 또는 1(OK) 저장
+    predicted_length = len(ng_detect.keys()) + len(ok_detect.keys())
+    for i in range(1, predicted_length + 1):  # 1부터 총 분석 부품 수까지
+        if i in ng_detect:
+            predicted_labels.append(0)  # NG
+        elif i in ok_detect:
+            predicted_labels.append(1)  # OK
+        else:
+            predicted_labels.append(-1)  # 누락된 경우
+
+    # 정확도 계산
+    correct_predictions = sum(
+        1 for p, g in zip(predicted_labels, true_classes) if p == g
+    )
+
+    accuracy = (
+        (correct_predictions / predicted_length) * 100 if predicted_length > 0 else 0.0
+    )
+
+    # 정확도 출력
+    st.metric(label=text["accuracy"], value=f"{accuracy:.2f}%")
+    # st.subheader(f"{text['accuracy']} : {accuracy:.2f}%")
+
+
 # 메인 함수
 def realtime_video_inference():
-    st.title("Real-time NG/OK Detection with Video")
+    st.title(text["title"])
 
     # S3 버킷 정보
     bucket_name = "cv-7-video"
@@ -299,6 +374,10 @@ def realtime_video_inference():
 
     if uploaded_file is not None:
         current_upload_time = time.strftime("%Y%m%d_%H%M%S")  # 현재 업로드 시간
+        # 이름 인식용 정규화
+        normalized_name = (
+            unicodedata.normalize("NFC", uploaded_file.name).lower().strip()
+        )
         # 새 파일 업로드 이벤트 처리
         if st.session_state.upload_time != current_upload_time:
             # 상태 초기화
@@ -309,13 +388,17 @@ def realtime_video_inference():
         with open(temp_video_path, "wb") as f:
             f.write(uploaded_file.getbuffer())
         st.success(
-            f"Complete Upload File : {uploaded_file.name} ({st.session_state['upload_time']})"
+            f"{text["upload_success"]} : {uploaded_file.name} ({st.session_state['upload_time']})"
         )
         st.video(temp_video_path, autoplay=True, muted=True)
 
         if not st.session_state.analysis_done:
-            with st.spinner("Anlayzing video"):
-                ng_detect, ok_detect = asyncio.run(
+
+            with st.spinner(text["processing"]):
+                (
+                    ng_detect,
+                    ok_detect,
+                ) = asyncio.run(
                     realtime_process_video_async(temp_video_path, tolerance=5)
                 )
                 st.session_state.analysis_done = True
@@ -339,9 +422,29 @@ def realtime_video_inference():
                 st.success(f"Results saved to S3: {result_key}")
 
         # 결과 출력
-        st.subheader("Final Result Summary")
-        st.error(f"Total {len(ng_detect.keys())} NG Parts: {list(ng_detect.keys())}")
-        st.success(f"Total {len(ok_detect.keys())} OK Parts: {list(ok_detect.keys())}")
+        # 해당 비디오에만 정확도 출력
+        if "다이케스팅" in normalized_name:
+            print_accuracy(ng_detect, ok_detect, text)
+
+        st.subheader(text["summary"])
+        if len(ng_detect.keys()) > 0:
+            if current_language == "en":
+                st.error(
+                    f"{text['total']} {len(ng_detect.keys())} NG {text['parts']}: {list(ng_detect.keys())}"
+                )
+            elif current_language == "kr":
+                st.error(
+                    f"{text['total']} {len(ng_detect.keys())}개의 NG {text['parts']}: {list(ng_detect.keys())}"
+                )
+        if len(ok_detect.keys()) > 0:
+            if current_language == "en":
+                st.success(
+                    f"{text['total']} {len(ok_detect.keys())} OK {text['parts']}: {list(ok_detect.keys())}"
+                )
+            elif current_language == "kr":
+                st.success(
+                    f"{text['total']} {len(ok_detect.keys())}개의 OK {text['parts']}: {list(ok_detect.keys())}"
+                )
 
         @st.fragment
         def show_ng_section():
