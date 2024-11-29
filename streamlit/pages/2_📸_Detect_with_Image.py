@@ -86,9 +86,14 @@ def display_results_and_save(images, results, final_result_name):
 
     bucket_name = "cv-7-video"  # S3 버킷 이름
     ng_images = []
+    ok_images = []
     ng_No = []
     ok_No = []
-    data = {"final_result_name": final_result_name, "ng_parts": [], "ok_parts": []}
+    data = {
+        "final_result_name": final_result_name,
+        "ng_parts": [],
+        "ok_parts": [],
+    }
 
     # 이미지별 결과 처리
     cols = st.columns(5)
@@ -102,6 +107,7 @@ def display_results_and_save(images, results, final_result_name):
             ng_images.append(image)
         else:
             ok_No.append(i + 1)
+            ok_images.append(image)
 
         # 각 이미지별 결과 표시
         bordered_image = add_border(image, label_color)
@@ -141,31 +147,49 @@ def display_results_and_save(images, results, final_result_name):
                 f"OK {text['parts']}: {', '.join(map(str, ok_No))} ({text['total']} {len(ok_No)} 개)"
             )
 
-    # 비동기 s3 업로드 작업
+    # 비동기 S3 업로드 작업
     async def perform_s3_uploads():
         upload_tasks = []
+        progress_bar = st.progress(0)
+        total_tasks = len(ng_images) + len(ok_No) + 1  # NG + OK + JSON 저장
+        completed_tasks = 0
 
+        # NG 이미지 업로드 작업
         for idx, img in enumerate(ng_images):
             key = f"results/image/{final_result_name}/NG_part_{idx + 1}.jpg"
-            upload_tasks.append(upload_image_to_s3_async(bucket_name, key, img))
+            task = upload_image_to_s3_async(bucket_name, key, img)
+            upload_tasks.append((task, "ng_parts", idx + 1))
 
+        # OK 이미지 업로드 작업
         for idx, img in enumerate(ok_No):
             key = f"results/image/{final_result_name}/OK_part_{idx + 1}.jpg"
-            upload_tasks.append(upload_image_to_s3_async(bucket_name, key, img))
+            task = upload_image_to_s3_async(bucket_name, key, img)
+            upload_tasks.append((task, "ok_parts", idx + 1))
+
+        # 작업 실행 및 결과 저장
+        for task, part_type, part_number in upload_tasks:
+            url = await task
+            data[part_type].append({"part_number": part_number, "image_url": url})
+            completed_tasks += 1
+            progress_bar.progress(completed_tasks / total_tasks)
 
         # JSON 데이터 업로드 작업 추가
         json_key = f"results/image/{final_result_name}/results.json"
-        upload_tasks.append(upload_results_to_s3_async(bucket_name, json_key, data))
-
-        # 모든 작업 비동기 실행
-        await asyncio.gather(*upload_tasks)
+        await upload_results_to_s3_async(bucket_name, json_key, data)
+        completed_tasks += 1
+        progress_bar.progress(completed_tasks / total_tasks)
 
     st.write("")
-    st.write("Upload to S3")
+    st.subheader("Upload to S3")
+
     # 비동기 작업 실행
-    with st.spinner("Upload to S3..."):
+    start_time = time.time()
+    with st.spinner("Uploading to S3..."):
         asyncio.run(perform_s3_uploads())
-        st.success("Complete Upload to S3!")
+    end_time = time.time()
+
+    st.success("Upload to S3 Completed!")
+    st.write(f"Upload Time: {end_time - start_time:.2f} seconds")
 
 
 def image_inference():
