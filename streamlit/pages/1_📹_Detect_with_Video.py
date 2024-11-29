@@ -19,6 +19,7 @@ from utils import (
 )
 import json
 import boto3
+import numpy as np  
 
 st.set_page_config(page_title="Realtime Detect Video", page_icon="📹")
 
@@ -220,7 +221,7 @@ def upload_image_to_s3(bucket_name, key, image_data):
     if len(image_data_array.shape) == 3 and image_data_array.shape[2] == 3:
  #       image_data_array = cv2.cvtColor(image_data_array, cv2.COLOR_BGR2RGB)
         ret, encoded_img = cv2.imencode('.jpg', image_data_array) 
-        st.markdown(encoded_img) #확인용
+        #st.markdown(encoded_img) #확인용
         if not ret:
             raise ValueError("Failed to encode image")
     
@@ -268,20 +269,24 @@ def save_results_with_images_to_s3(
         #st.markdown(ng_images) #확인용
         for i in range(len(ng_images[idx+1])):
             key = f"results/{video_name}/NG_part_{idx + 1}/{i+1}.jpg"
-            image_url = upload_image_to_s3(bucket_name, key, ng_images[idx+1])
+            #st.markdown(idx)   #확인용
+            st.markdown(ng_images[idx+1][i][0][0]) #확인용
+            
+            image_url = upload_image_to_s3(bucket_name, key, ng_images[idx+1][i][0])
             result_data_in.append({"part_number": idx + 1, "image_url": image_url})
-        result_data["ng_parts"].append(result_data_in)
-        #st.markdown(idx)   #확인용
+            result_data["ng_parts"].append(result_data_in)
         #st.markdown(image_url) #확인용
+        
 
     for idx in range(len(ok_images)):
         result_data_in = []
         #st.markdown(ng_images) #확인용
-        for i in range(len(ok_images[idx+1])):
+        for i in range(len(ok_images[idx+1])-2):
             key = f"results/{video_name}/OK_part_{idx + 1}/{i+1}.jpg"
-            image_url = upload_image_to_s3(bucket_name, key, ok_images[idx+1])
+            st.markdown(ng_images[idx+1][i][0][0]) #확인용
+            image_url = upload_image_to_s3(bucket_name, key, ok_images[idx+1][i][0])
             result_data_in.append({"part_number": idx + 1, "image_url": image_url})
-        result_data["ok_parts"].append(result_data_in)
+            result_data["ok_parts"].append(result_data_in)
     
 
     # JSON 데이터 저장
@@ -415,10 +420,11 @@ def realtime_video_inference():
                 #    save_results_with_images_to_s3(
                 #    bucket_name, uploaded_file.name, ng_detect[i+1], ok_detect[i+1]
                 #)
+                #st.success(ng_detect) #확인용
                 save_results_with_images_to_s3(
                     bucket_name, uploaded_file.name, ng_detect, ok_detect
                 )
-                #st.success(ng_detect) #확인용
+                
                 st.success(f"Results saved to S3: {result_key}")
 
         # 결과 출력
