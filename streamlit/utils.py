@@ -8,7 +8,7 @@ import os
 from PIL import Image
 
 # .env 파일 로드
-load_dotenv(dotenv_path="AWS.env")
+load_dotenv(dotenv_path=".env")
 
 
 # 이미지 해시 함수

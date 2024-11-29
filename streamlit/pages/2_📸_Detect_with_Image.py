@@ -5,6 +5,10 @@ import os
 import json
 import boto3
 import time  # time 모듈 추가
+from dotenv import load_dotenv
+import os
+from PIL import Image
+
 from translations import init_language, set_language, translations
 from utils import (
     resize_and_pad_image,
@@ -19,6 +23,16 @@ st.set_page_config(
     page_icon="📸",
 )
 
+# .env 파일 로드
+load_dotenv(dotenv_path=".env")
+
+# 언어 초기화 및 선택
+init_language()
+set_language()
+current_language = st.session_state["language"]
+text = translations[current_language]["image"]
+
+
 # S3 클라이언트 생성
 def get_s3_client():
     return boto3.client(
@@ -27,6 +41,7 @@ def get_s3_client():
         aws_secret_access_key=os.getenv("AWS_SECRET_ACCESS_KEY"),
         region_name=os.getenv("AWS_REGION"),
     )
+
 
 # S3에 이미지 업로드
 def upload_image_to_s3(bucket_name, key, image):
@@ -40,6 +55,7 @@ def upload_image_to_s3(bucket_name, key, image):
     )
     return f"https://{bucket_name}.s3.{os.getenv('AWS_REGION')}.amazonaws.com/{key}"
 
+
 # JSON 데이터 S3에 저장
 def upload_results_to_s3(bucket_name, key, data):
     s3 = get_s3_client()
@@ -49,11 +65,6 @@ def upload_results_to_s3(bucket_name, key, data):
         Body=json.dumps(data),
         ContentType="application/json",
     )
-# 언어 초기화 및 선택
-init_language()
-set_language()
-current_language = st.session_state["language"]
-text = translations[current_language]["image"]
 
 
 # 이미지 전처리 함수
@@ -65,15 +76,16 @@ def preprocess_image(image):
     )
     return processed_image
 
+
 # 이미지 결과 표시 및 S3 업로드 함수
-def display_results_and_save(images, results, video_name):
+def display_results_and_save(images, results, final_result_name):
     st.subheader(text["predict"])
 
     bucket_name = "cv-7-video"  # S3 버킷 이름
     ng_images = []
     ng_No = []
     ok_No = []
-    data = {"video_name": video_name, "ng_parts": [], "ok_parts": []}
+    data = {"final_result_name": final_result_name, "ng_parts": [], "ok_parts": []}
 
     # 이미지별 결과 처리
     cols = st.columns(5)
@@ -96,13 +108,13 @@ def display_results_and_save(images, results, video_name):
 
     # NG 이미지 S3 업로드
     for idx, img in enumerate(ng_images):
-        key = f"results/{video_name}/NG_part_{idx + 1}.jpg"
+        key = f"results/image/{final_result_name}/NG_part_{idx + 1}.jpg"
         image_url = upload_image_to_s3(bucket_name, key, img)
         data["ng_parts"].append({"part_number": idx + 1, "image_url": image_url})
 
     # OK 이미지 S3 업로드
     for idx, img in enumerate(ok_No):
-        key = f"results/{video_name}/OK_part_{idx + 1}.jpg"
+        key = f"results/image/{final_result_name}/OK_part_{idx + 1}.jpg"
         image_url = upload_image_to_s3(bucket_name, key, img)
         data["ok_parts"].append({"part_number": idx + 1, "image_url": image_url})
 
@@ -117,7 +129,7 @@ def display_results_and_save(images, results, video_name):
             )
 
     # 최종 결과 JSON S3에 업로드
-    json_key = f"results/{video_name}/results.json"
+    json_key = f"results/image/{final_result_name}/results.json"
     upload_results_to_s3(bucket_name, json_key, data)
 
     # 최종 결과 표시
@@ -141,6 +153,7 @@ def display_results_and_save(images, results, video_name):
             st.success(
                 f"OK {text['parts']}: {', '.join(map(str, ok_No))} ({text['total']} {len(ok_No)} 개)"
             )
+
 
 def image_inference():
     st.title(text["title"])
@@ -177,8 +190,9 @@ def image_inference():
 
         # 결과 출력 및 S3 저장
         st.success(text["success_processing"])
-        video_name = f"image_inference_{int(time.time())}"  # 고유 비디오 이름
-        display_results_and_save(images, results, video_name)
+        current_upload_time = time.strftime("%Y%m%d_%H%M%S")  # 현재 업로드 시간
+        final_result_name = f"{current_upload_time}_image_inference"  # 고유 비디오 이름
+        display_results_and_save(images, results, final_result_name)
 
 
 # 프로그램 실행
