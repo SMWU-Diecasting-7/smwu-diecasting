@@ -5,7 +5,6 @@ import os
 import json
 import boto3
 import time  # time 모듈 추가
-from translations import init_language, set_language, translations
 from utils import (
     resize_and_pad_image,
     crop_image,
@@ -49,12 +48,6 @@ def upload_results_to_s3(bucket_name, key, data):
         Body=json.dumps(data),
         ContentType="application/json",
     )
-# 언어 초기화 및 선택
-init_language()
-set_language()
-current_language = st.session_state["language"]
-text = translations[current_language]["image"]
-
 
 # 이미지 전처리 함수
 def preprocess_image(image):
@@ -65,14 +58,15 @@ def preprocess_image(image):
     )
     return processed_image
 
-# 이미지 결과 표시 및 S3 업로드 함수
+# 이미지 결과 표시 및 저장 함수
 def display_results_and_save(images, results, video_name):
-    st.subheader(text["predict"])
+    st.subheader("Predict Result")
 
     bucket_name = "cv-7-video"  # S3 버킷 이름
     ng_images = []
-    ng_No = []
-    ok_No = []
+    ok_images = []
+    ng_parts = []
+    ok_parts = []
     data = {"video_name": video_name, "ng_parts": [], "ok_parts": []}
 
     # 이미지별 결과 처리
@@ -83,10 +77,11 @@ def display_results_and_save(images, results, video_name):
 
         # 이미지 상태 기록
         if status == 0:
-            ng_No.append(i + 1)
             ng_images.append(image)
+            ng_parts.append(i + 1)
         else:
-            ok_No.append(i + 1)
+            ok_images.append(image)
+            ok_parts.append(i + 1)
 
         # 각 이미지별 결과 표시
         bordered_image = add_border(image, label_color)
@@ -94,66 +89,52 @@ def display_results_and_save(images, results, video_name):
             bordered_image, channels="BGR", caption=f"Part. {i + 1}: {label}"
         )
 
-    # NG 이미지 S3 업로드
+    # NG 이미지 업로드
     for idx, img in enumerate(ng_images):
         key = f"results/{video_name}/NG_part_{idx + 1}.jpg"
         image_url = upload_image_to_s3(bucket_name, key, img)
         data["ng_parts"].append({"part_number": idx + 1, "image_url": image_url})
 
-    # OK 이미지 S3 업로드
-    for idx, img in enumerate(ok_No):
+    # OK 이미지 업로드
+    for idx, img in enumerate(ok_images):
         key = f"results/{video_name}/OK_part_{idx + 1}.jpg"
         image_url = upload_image_to_s3(bucket_name, key, img)
         data["ok_parts"].append({"part_number": idx + 1, "image_url": image_url})
 
     # NG 이미지 추가 출력
     if ng_images:
-        st.subheader(text["final_ng"])
+        st.subheader("Final NG Parts")
         cols = st.columns(5)
-        for idx, (ng_image, ng_no) in enumerate(zip(ng_images, ng_No)):
+        for idx, (ng_image, ng_no) in enumerate(zip(ng_images, ng_parts)):
             bordered_ng_image = add_border(ng_image, (0, 0, 255))
             cols[idx % 5].image(
                 bordered_ng_image, channels="BGR", caption=f"No. {ng_no}"
             )
 
-    # 최종 결과 JSON S3에 업로드
+    # 최종 결과 JSON 저장
     json_key = f"results/{video_name}/results.json"
     upload_results_to_s3(bucket_name, json_key, data)
 
     # 최종 결과 표시
-    st.subheader(text["summary"])
-    if ng_No:
-        if current_language == "en":
-            st.error(
-                f"NG {text['parts']}: {', '.join(map(str, ng_No))} ({text['total']}: {len(ng_No)})"
-            )
-        elif current_language == "kr":
-            st.error(
-                f"NG {text['parts']}: {', '.join(map(str, ng_No))} ({text['total']} {len(ng_No)} 개)"
-            )
+    st.subheader("Final Result Summary")
+    if ng_parts:
+        st.error(f"NG Parts: {', '.join(map(str, ng_parts))} (Total: {len(ng_parts)})")
+    if ok_parts:
+        st.success(f"OK Parts: {', '.join(map(str, ok_parts))} (Total: {len(ok_parts)})")
 
-    if ok_No:
-        if current_language == "en":
-            st.success(
-                f"OK {text['parts']}: {', '.join(map(str, ok_No))} ({text['total']}: {len(ok_No)})"
-            )
-        elif current_language == "kr":
-            st.success(
-                f"OK {text['parts']}: {', '.join(map(str, ok_No))} ({text['total']} {len(ok_No)} 개)"
-            )
-
+# 이미지 추론 메인 함수
 def image_inference():
-    st.title(text["title"])
+    st.title("Real-time NG/OK Image Classification")
 
     # 이미지 파일 업로드
     uploaded_images = st.file_uploader(
-        text["upload"], type=["jpg", "jpeg", "png"], accept_multiple_files=True
+        "Choose image files", type=["jpg", "jpeg", "png"], accept_multiple_files=True
     )
 
     if uploaded_images:
-        st.success(text["upload_success"])
+        video_name = f"image_inference_{int(time.time())}"  # 고유 비디오 이름
         images = []
-        st.subheader(text["uploaded_image"])
+        st.subheader("Uploaded Images")
         cols = st.columns(len(uploaded_images))
 
         for idx, uploaded_image in enumerate(uploaded_images):
@@ -161,25 +142,23 @@ def image_inference():
             image = cv2.imdecode(
                 np.frombuffer(uploaded_image.read(), np.uint8), cv2.IMREAD_COLOR
             )
-            cols[idx].image(image, channels="BGR", caption=f"Image {idx + 1}")
+            cols[idx].image(image, channels="BGR", caption=f"Uploaded Image {idx + 1}")
             images.append(image)
 
         # 이미지 전처리
-        with st.spinner(text["processing"]):
+        with st.spinner("Processing Images..."):
             processed_images = [preprocess_image(img) for img in images]
 
         # SageMaker 추론
-        with st.spinner(text["processing"]):
+        with st.spinner("Analyzing Images..."):
             results = [
                 invoke_sagemaker_endpoint("diecasting-model-T7-endpoint", img)
                 for img in processed_images
             ]
 
-        # 결과 출력 및 S3 저장
-        st.success(text["success_processing"])
-        video_name = f"image_inference_{int(time.time())}"  # 고유 비디오 이름
+        # 결과 표시 및 저장
+        st.success("Inference Complete!")
         display_results_and_save(images, results, video_name)
-
 
 # 프로그램 실행
 if __name__ == "__main__":
