@@ -25,17 +25,13 @@ def get_s3_client():
 # S3에서 JSON 결과 불러오기
 def fetch_results_from_s3(bucket_name, prefix):
     s3 = get_s3_client()
-    try:
-        # S3에서 객체 목록 가져오기
-        response = s3.list_objects_v2(Bucket=bucket_name, Prefix=prefix)
-        if "Contents" not in response:
-            st.error(f"No objects found with prefix '{prefix}' in the bucket '{bucket_name}'.")
-            return []
+    response = s3.list_objects_v2(Bucket=bucket_name, Prefix=prefix)
 
-        results = []
+    results = []
+    if "Contents" in response:
         for obj in response["Contents"]:
             key = obj["Key"]
-            if key.endswith(".json"):  # JSON 파일만 처리
+            if key.endswith(".json"):
                 try:
                     json_data = s3.get_object(Bucket=bucket_name, Key=key)["Body"].read()
                     results.append(json.loads(json_data))
@@ -43,12 +39,7 @@ def fetch_results_from_s3(bucket_name, prefix):
                     st.error(f"Failed to decode JSON for {key}")
                 except Exception as e:
                     st.error(f"Error fetching data for {key}: {str(e)}")
-
-        return results
-
-    except Exception as e:
-        st.error(f"Failed to list objects from S3 bucket: {str(e)}")
-        return []
+    return results
 
 # 히스토리 데이터를 화면에 표시
 def display_history(results):
